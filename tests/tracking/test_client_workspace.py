@@ -115,3 +115,52 @@ def test_set_workspace_clears_when_none(monkeypatch):
     workspace_fluent.set_workspace(None)
     assert calls["clear_workspace"] == 1
     assert env.get("value") is None
+
+
+def test_mlflow_client_forwards_trace_archival_settings(monkeypatch):
+    recorded: dict[str, tuple[tuple[object, ...], dict[str, object]]] = {}
+
+    class DummyTrackingClient:
+        def __init__(self, tracking_uri: str):
+            self.tracking_uri = tracking_uri
+
+    class DummyWorkspaceClient:
+        def __init__(self, workspace_uri: str | None = None):
+            self.workspace_uri = workspace_uri
+
+        def create_workspace(self, *args, **kwargs):
+            recorded["create"] = (args, kwargs)
+            return None
+
+        def update_workspace(self, *args, **kwargs):
+            recorded["update"] = (args, kwargs)
+            return None
+
+    monkeypatch.setattr("mlflow.tracking.client.TrackingServiceClient", DummyTrackingClient)
+    monkeypatch.setattr("mlflow.tracking.client.TracingClient", lambda _: None)
+    monkeypatch.setattr("mlflow.tracking.client.WorkspaceProviderClient", DummyWorkspaceClient)
+    monkeypatch.setattr(
+        "mlflow.tracking.client.utils._resolve_tracking_uri",
+        lambda uri: uri or "sqlite:///tracking.db",
+    )
+    monkeypatch.setattr(
+        "mlflow.tracking.client.registry_utils._resolve_registry_uri",
+        lambda registry_uri, tracking_uri: "registry-resolved",
+    )
+
+    client = MlflowClient(tracking_uri="sqlite:///tracking.db")
+    client.create_workspace(
+        "team-a",
+        trace_archival_location="s3://archive/team-a",
+        trace_archival_retention="30d",
+    )
+    client.update_workspace(
+        "team-a",
+        trace_archival_location="s3://archive/team-b",
+        trace_archival_retention="14d",
+    )
+
+    assert recorded["create"][1]["trace_archival_location"] == "s3://archive/team-a"
+    assert recorded["update"][1]["trace_archival_location"] == "s3://archive/team-b"
+    assert recorded["create"][1]["trace_archival_retention"] == "30d"
+    assert recorded["update"][1]["trace_archival_retention"] == "14d"

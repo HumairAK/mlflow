@@ -29,12 +29,16 @@ class Workspace:
     name: str
     description: str | None = None
     default_artifact_root: str | None = None
+    trace_archival_location: str | None = None
+    trace_archival_retention: str | None = None
 
     def to_dict(self) -> dict[str, str | None]:
         return {
             "name": self.name,
             "description": self.description,
             "default_artifact_root": self.default_artifact_root,
+            "trace_archival_location": self.trace_archival_location,
+            "trace_archival_retention": self.trace_archival_retention,
         }
 
     @classmethod
@@ -43,6 +47,8 @@ class Workspace:
             name=payload["name"],
             description=payload.get("description"),
             default_artifact_root=payload.get("default_artifact_root"),
+            trace_archival_location=payload.get("trace_archival_location"),
+            trace_archival_retention=payload.get("trace_archival_retention"),
         )
 
     def to_proto(self) -> ProtoWorkspace:
@@ -52,6 +58,10 @@ class Workspace:
             workspace.description = self.description
         if self.default_artifact_root is not None:
             workspace.default_artifact_root = self.default_artifact_root
+        if self.trace_archival_location is not None:
+            workspace.trace_archival_location = self.trace_archival_location
+        if self.trace_archival_retention is not None:
+            workspace.trace_archival_retention = self.trace_archival_retention
         return workspace
 
     @classmethod
@@ -60,8 +70,16 @@ class Workspace:
         default_artifact_root = (
             proto.default_artifact_root if proto.HasField("default_artifact_root") else None
         )
+        trace_archival_location = (
+            proto.trace_archival_location if proto.HasField("trace_archival_location") else None
+        )
+        trace_archival_retention = (
+            proto.trace_archival_retention if proto.HasField("trace_archival_retention") else None
+        )
         return cls(
             name=proto.name,
             description=description,
             default_artifact_root=default_artifact_root,
+            trace_archival_location=trace_archival_location,
+            trace_archival_retention=trace_archival_retention,
         )

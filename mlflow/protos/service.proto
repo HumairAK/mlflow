@@ -5314,6 +5314,12 @@ message Workspace {
 
   // Optional default artifact root override for this workspace.
   optional string default_artifact_root = 3;
+
+  // Optional archival repository root override for this workspace.
+  optional string trace_archival_location = 4;
+
+  // Optional archival retention override for this workspace.
+  optional string trace_archival_retention = 5;
 }
 
 // List workspaces available to the current principal.
@@ -5338,6 +5344,12 @@ message CreateWorkspace {
 
   // Optional default artifact root override to apply at creation time.
   optional string default_artifact_root = 3;
+
+  // Optional archival repository root override to apply at creation time.
+  optional string trace_archival_location = 4;
+
+  // Optional archival retention override to apply at creation time.
+  optional string trace_archival_retention = 5;
 
   message Response {
     // Metadata describing the created workspace.
@@ -5370,6 +5382,12 @@ message UpdateWorkspace {
 
   // Optional default artifact root override update.
   optional string default_artifact_root = 3;
+
+  // Optional archival repository root override update.
+  optional string trace_archival_location = 4;
+
+  // Optional archival retention override update.
+  optional string trace_archival_retention = 5;
 
   message Response {
     // Metadata describing the updated workspace.

@@ -1109,6 +1109,34 @@ def _validate_workspace_default_artifact_root(value: str | None) -> str | None:
     return _validate_artifact_root_uri(trimmed, "default_artifact_root")
 
 
+def _validate_workspace_trace_archival_location(value: str | None) -> str | None:
+    if value is None:
+        return None
+
+    trimmed = value.strip()
+    if not trimmed:
+        return ""
+
+    return _validate_artifact_root_uri(trimmed, "trace_archival_location")
+
+
+def _validate_workspace_trace_archival_retention(value: str | None) -> str | None:
+    if value is None:
+        return None
+
+    trimmed = value.strip()
+    if not trimmed:
+        return ""
+
+    if re.fullmatch(r"[1-9][0-9]*[mhd]", trimmed) is None:
+        raise MlflowException.invalid_parameter_value(
+            "Invalid value for 'trace_archival_retention'. Expected a duration in the form "
+            "<int><unit>, where unit is one of 'm', 'h', or 'd' (for example '30d' or '12h')."
+        )
+
+    return trimmed
+
+
 def _ensure_artifact_root_available(workspace_artifact_root: str | None) -> None:
     """Ensure an artifact root is available either at workspace or server level.
 
@@ -1154,6 +1182,8 @@ def _create_workspace_handler():
             "name": [_assert_required, _assert_string],
             "description": [_assert_string],
             "default_artifact_root": [_assert_string],
+            "trace_archival_location": [_assert_string],
+            "trace_archival_retention": [_assert_string],
         },
     )
 
@@ -1168,7 +1198,21 @@ def _create_workspace_handler():
         if request_message.HasField("default_artifact_root")
         else None
     )
+    trace_archival_location = (
+        request_message.trace_archival_location
+        if request_message.HasField("trace_archival_location")
+        else None
+    )
+    trace_archival_retention = (
+        request_message.trace_archival_retention
+        if request_message.HasField("trace_archival_retention")
+        else None
+    )
     default_artifact_root = _validate_workspace_default_artifact_root(default_artifact_root)
+    trace_archival_location = _validate_workspace_trace_archival_location(trace_archival_location)
+    trace_archival_retention = _validate_workspace_trace_archival_retention(
+        trace_archival_retention
+    )
     _ensure_artifact_root_available(default_artifact_root)
     store = _get_workspace_store()
     try:
@@ -1177,6 +1221,8 @@ def _create_workspace_handler():
                 name=request_message.name,
                 description=description,
                 default_artifact_root=default_artifact_root,
+                trace_archival_location=trace_archival_location,
+                trace_archival_retention=trace_archival_retention,
             )
         )
     except NotImplementedError:
@@ -1210,18 +1256,37 @@ def _update_workspace_handler(workspace_name: str):
         schema={
             "description": [_assert_string],
             "default_artifact_root": [_assert_string],
+            "trace_archival_location": [_assert_string],
+            "trace_archival_retention": [_assert_string],
         },
     )
 
     has_description = request_message.HasField("description")
     has_artifact_root = request_message.HasField("default_artifact_root")
+    has_trace_archival_location = request_message.HasField("trace_archival_location")
+    has_trace_archival_retention = request_message.HasField("trace_archival_retention")
 
-    if not has_description and not has_artifact_root:
+    if (
+        not has_description
+        and not has_artifact_root
+        and not has_trace_archival_location
+        and not has_trace_archival_retention
+    ):
         raise MlflowException.invalid_parameter_value("Workspace update must have at least one key")
 
     description = request_message.description if has_description else None
     default_artifact_root = request_message.default_artifact_root if has_artifact_root else None
+    trace_archival_location = (
+        request_message.trace_archival_location if has_trace_archival_location else None
+    )
+    trace_archival_retention = (
+        request_message.trace_archival_retention if has_trace_archival_retention else None
+    )
     default_artifact_root = _validate_workspace_default_artifact_root(default_artifact_root)
+    trace_archival_location = _validate_workspace_trace_archival_location(trace_archival_location)
+    trace_archival_retention = _validate_workspace_trace_archival_retention(
+        trace_archival_retention
+    )
 
     # If the user is clearing the workspace artifact root (empty string), ensure the server
     # has a default artifact root configured
@@ -1235,6 +1300,8 @@ def _update_workspace_handler(workspace_name: str):
                 name=workspace_name,
                 description=description,
                 default_artifact_root=default_artifact_root,
+                trace_archival_location=trace_archival_location,
+                trace_archival_retention=trace_archival_retention,
             )
         )
     except NotImplementedError:

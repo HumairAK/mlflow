@@ -5317,15 +5317,19 @@ CreateWorkspace
 Create a new workspace.
 
 
-+-----------------------+------------+--------------------------------------------------------------------+
-|      Field Name       |    Type    |                            Description                             |
-+=======================+============+====================================================================+
-| name                  | ``STRING`` | Workspace name to create. This field is required.                  |
-+-----------------------+------------+--------------------------------------------------------------------+
-| description           | ``STRING`` | Optional workspace description.                                    |
-+-----------------------+------------+--------------------------------------------------------------------+
-| default_artifact_root | ``STRING`` | Optional default artifact root override to apply at creation time. |
-+-----------------------+------------+--------------------------------------------------------------------+
++--------------------------+------------+-----------------------------------------------------------------------+
+|        Field Name        |    Type    |                              Description                              |
++==========================+============+=======================================================================+
+| name                     | ``STRING`` | Workspace name to create. This field is required.                     |
++--------------------------+------------+-----------------------------------------------------------------------+
+| description              | ``STRING`` | Optional workspace description.                                       |
++--------------------------+------------+-----------------------------------------------------------------------+
+| default_artifact_root    | ``STRING`` | Optional default artifact root override to apply at creation time.    |
++--------------------------+------------+-----------------------------------------------------------------------+
+| trace_archival_location  | ``STRING`` | Optional archival repository root override to apply at creation time. |
++--------------------------+------------+-----------------------------------------------------------------------+
+| trace_archival_retention | ``STRING`` | Optional archival retention override to apply at creation time.       |
++--------------------------+------------+-----------------------------------------------------------------------+
 
 .. _mlflowDataset:
 
@@ -8781,15 +8785,19 @@ UpdateWorkspace
 Update workspace metadata.
 
 
-+-----------------------+------------+----------------------------------------------------------+
-|      Field Name       |    Type    |                       Description                        |
-+=======================+============+==========================================================+
-| workspace_name        | ``STRING`` | Name of the workspace to update. This field is required. |
-+-----------------------+------------+----------------------------------------------------------+
-| description           | ``STRING`` | Optional description update.                             |
-+-----------------------+------------+----------------------------------------------------------+
-| default_artifact_root | ``STRING`` | Optional default artifact root override update.          |
-+-----------------------+------------+----------------------------------------------------------+
++--------------------------+------------+----------------------------------------------------------+
+|        Field Name        |    Type    |                       Description                        |
++==========================+============+==========================================================+
+| workspace_name           | ``STRING`` | Name of the workspace to update. This field is required. |
++--------------------------+------------+----------------------------------------------------------+
+| description              | ``STRING`` | Optional description update.                             |
++--------------------------+------------+----------------------------------------------------------+
+| default_artifact_root    | ``STRING`` | Optional default artifact root override update.          |
++--------------------------+------------+----------------------------------------------------------+
+| trace_archival_location  | ``STRING`` | Optional archival repository root override update.       |
++--------------------------+------------+----------------------------------------------------------+
+| trace_archival_retention | ``STRING`` | Optional archival retention override update.             |
++--------------------------+------------+----------------------------------------------------------+
 
 .. _mlflowUpsertDatasetRecords:
 
@@ -8909,15 +8917,19 @@ Workspace
 Workspace metadata returned by workspace APIs.
 
 
-+-----------------------+------------+-------------------------------------------------------------+
-|      Field Name       |    Type    |                         Description                         |
-+=======================+============+=============================================================+
-| name                  | ``STRING`` | The unique workspace name. This field is required.          |
-+-----------------------+------------+-------------------------------------------------------------+
-| description           | ``STRING`` | Optional workspace description.                             |
-+-----------------------+------------+-------------------------------------------------------------+
-| default_artifact_root | ``STRING`` | Optional default artifact root override for this workspace. |
-+-----------------------+------------+-------------------------------------------------------------+
++--------------------------+------------+----------------------------------------------------------------+
+|        Field Name        |    Type    |                          Description                           |
++==========================+============+================================================================+
+| name                     | ``STRING`` | The unique workspace name. This field is required.             |
++--------------------------+------------+----------------------------------------------------------------+
+| description              | ``STRING`` | Optional workspace description.                                |
++--------------------------+------------+----------------------------------------------------------------+
+| default_artifact_root    | ``STRING`` | Optional default artifact root override for this workspace.    |
++--------------------------+------------+----------------------------------------------------------------+
+| trace_archival_location  | ``STRING`` | Optional archival repository root override for this workspace. |
++--------------------------+------------+----------------------------------------------------------------+
+| trace_archival_retention | ``STRING`` | Optional archival retention override for this workspace.       |
++--------------------------+------------+----------------------------------------------------------------+
 
 .. _mlflowAggregationType:
 
