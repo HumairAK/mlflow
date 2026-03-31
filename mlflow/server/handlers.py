@@ -1098,7 +1098,7 @@ def _validate_artifact_root_uri(value: str, field_name: str) -> str:
     return value
 
 
-def _validate_workspace_default_artifact_root(value: str | None) -> str | None:
+def _validate_optional_workspace_artifact_root(value: str | None, field_name: str) -> str | None:
     if value is None:
         return None
 
@@ -1106,18 +1106,15 @@ def _validate_workspace_default_artifact_root(value: str | None) -> str | None:
     if not trimmed:
         return ""
 
-    return _validate_artifact_root_uri(trimmed, "default_artifact_root")
+    return _validate_artifact_root_uri(trimmed, field_name)
+
+
+def _validate_workspace_default_artifact_root(value: str | None) -> str | None:
+    return _validate_optional_workspace_artifact_root(value, "default_artifact_root")
 
 
 def _validate_workspace_trace_archival_location(value: str | None) -> str | None:
-    if value is None:
-        return None
-
-    trimmed = value.strip()
-    if not trimmed:
-        return ""
-
-    return _validate_artifact_root_uri(trimmed, "trace_archival_location")
+    return _validate_optional_workspace_artifact_root(value, "trace_archival_location")
 
 
 def _validate_workspace_trace_archival_retention(value: str | None) -> str | None:
@@ -1128,10 +1125,16 @@ def _validate_workspace_trace_archival_retention(value: str | None) -> str | Non
     if not trimmed:
         return ""
 
+    if len(trimmed) > 32:
+        raise MlflowException.invalid_parameter_value(
+            "Invalid value for 'trace_archival_retention'. Maximum length is 32 characters."
+        )
+
     if re.fullmatch(r"[1-9][0-9]*[mhd]", trimmed) is None:
         raise MlflowException.invalid_parameter_value(
             "Invalid value for 'trace_archival_retention'. Expected a duration in the form "
-            "<int><unit>, where unit is one of 'm', 'h', or 'd' (for example '30d' or '12h')."
+            "`<int><unit>`, where unit is one of 'm', 'h', or 'd' "
+            "(for example '30d' or '12h')."
         )
 
     return trimmed

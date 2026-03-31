@@ -76,7 +76,7 @@ def create_workspace(
         description: Optional description of the workspace.
         default_artifact_root: Optional artifact root URI; falls back to server default.
         trace_archival_location: Optional archival repository URI override for traces.
-        trace_archival_retention: Optional archival retention override for traces.
+        trace_archival_retention: Optional archival retention override like ``30d`` or ``12h``.
 
     Returns:
         The newly created workspace.
@@ -111,7 +111,7 @@ def update_workspace(
         description: New description, or ``None`` to leave unchanged.
         default_artifact_root: New artifact root URI, empty string to clear, or ``None``.
         trace_archival_location: New archival repository URI, empty string to clear, or ``None``.
-        trace_archival_retention: New archival retention, empty string to clear, or ``None``.
+        trace_archival_retention: New retention like ``30d``; empty string to clear, or ``None``.
 
     Returns:
         The updated workspace.

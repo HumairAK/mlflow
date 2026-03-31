@@ -19,7 +19,9 @@ depends_on = None
 def upgrade():
     with op.batch_alter_table("workspaces", schema=None) as batch_op:
         batch_op.add_column(sa.Column("trace_archival_location", sa.Text(), nullable=True))
-        batch_op.add_column(sa.Column("trace_archival_retention", sa.Text(), nullable=True))
+        batch_op.add_column(
+            sa.Column("trace_archival_retention", sa.String(length=32), nullable=True)
+        )
 
 
 def downgrade():
