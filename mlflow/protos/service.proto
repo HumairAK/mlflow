@@ -5318,7 +5318,8 @@ message Workspace {
   // Optional archival repository root override for this workspace.
   optional string trace_archival_location = 4;
 
-  // Optional archival retention override for this workspace.
+  // Optional archival retention override for this workspace. Format: <int><unit>,
+  // for example 30d.
   optional string trace_archival_retention = 5;
 }
 
@@ -5348,7 +5349,8 @@ message CreateWorkspace {
   // Optional archival repository root override to apply at creation time.
   optional string trace_archival_location = 4;
 
-  // Optional archival retention override to apply at creation time.
+  // Optional archival retention override to apply at creation time. Format:
+  // <int><unit>, for example 30d.
   optional string trace_archival_retention = 5;
 
   message Response {
@@ -5386,7 +5388,8 @@ message UpdateWorkspace {
   // Optional archival repository root override update.
   optional string trace_archival_location = 4;
 
-  // Optional archival retention override update.
+  // Optional archival retention override update. Format: <int><unit>, for
+  // example 30d.
   optional string trace_archival_retention = 5;
 
   message Response {

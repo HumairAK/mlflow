@@ -276599,7 +276599,8 @@ public final class Service {
 
     /**
      * <pre>
-     * Optional archival retention override for this workspace.
+     * Optional archival retention override for this workspace. Format: &lt;int&gt;&lt;unit&gt;,
+     * for example 30d.
      * </pre>
      *
      * <code>optional string trace_archival_retention = 5;</code>
@@ -276608,7 +276609,8 @@ public final class Service {
     boolean hasTraceArchivalRetention();
     /**
      * <pre>
-     * Optional archival retention override for this workspace.
+     * Optional archival retention override for this workspace. Format: &lt;int&gt;&lt;unit&gt;,
+     * for example 30d.
      * </pre>
      *
      * <code>optional string trace_archival_retention = 5;</code>
@@ -276617,7 +276619,8 @@ public final class Service {
     java.lang.String getTraceArchivalRetention();
     /**
      * <pre>
-     * Optional archival retention override for this workspace.
+     * Optional archival retention override for this workspace. Format: &lt;int&gt;&lt;unit&gt;,
+     * for example 30d.
      * </pre>
      *
      * <code>optional string trace_archival_retention = 5;</code>
@@ -276988,7 +276991,8 @@ public final class Service {
     private volatile java.lang.Object traceArchivalRetention_;
     /**
      * <pre>
-     * Optional archival retention override for this workspace.
+     * Optional archival retention override for this workspace. Format: &lt;int&gt;&lt;unit&gt;,
+     * for example 30d.
      * </pre>
      *
      * <code>optional string trace_archival_retention = 5;</code>
@@ -277000,7 +277004,8 @@ public final class Service {
     }
     /**
      * <pre>
-     * Optional archival retention override for this workspace.
+     * Optional archival retention override for this workspace. Format: &lt;int&gt;&lt;unit&gt;,
+     * for example 30d.
      * </pre>
      *
      * <code>optional string trace_archival_retention = 5;</code>
@@ -277023,7 +277028,8 @@ public final class Service {
     }
     /**
      * <pre>
-     * Optional archival retention override for this workspace.
+     * Optional archival retention override for this workspace. Format: &lt;int&gt;&lt;unit&gt;,
+     * for example 30d.
      * </pre>
      *
      * <code>optional string trace_archival_retention = 5;</code>
@@ -277902,7 +277908,8 @@ public final class Service {
       private java.lang.Object traceArchivalRetention_ = "";
       /**
        * <pre>
-       * Optional archival retention override for this workspace.
+       * Optional archival retention override for this workspace. Format: &lt;int&gt;&lt;unit&gt;,
+       * for example 30d.
        * </pre>
        *
        * <code>optional string trace_archival_retention = 5;</code>
@@ -277913,7 +277920,8 @@ public final class Service {
       }
       /**
        * <pre>
-       * Optional archival retention override for this workspace.
+       * Optional archival retention override for this workspace. Format: &lt;int&gt;&lt;unit&gt;,
+       * for example 30d.
        * </pre>
        *
        * <code>optional string trace_archival_retention = 5;</code>
@@ -277935,7 +277943,8 @@ public final class Service {
       }
       /**
        * <pre>
-       * Optional archival retention override for this workspace.
+       * Optional archival retention override for this workspace. Format: &lt;int&gt;&lt;unit&gt;,
+       * for example 30d.
        * </pre>
        *
        * <code>optional string trace_archival_retention = 5;</code>
@@ -277956,7 +277965,8 @@ public final class Service {
       }
       /**
        * <pre>
-       * Optional archival retention override for this workspace.
+       * Optional archival retention override for this workspace. Format: &lt;int&gt;&lt;unit&gt;,
+       * for example 30d.
        * </pre>
        *
        * <code>optional string trace_archival_retention = 5;</code>
@@ -277975,7 +277985,8 @@ public final class Service {
       }
       /**
        * <pre>
-       * Optional archival retention override for this workspace.
+       * Optional archival retention override for this workspace. Format: &lt;int&gt;&lt;unit&gt;,
+       * for example 30d.
        * </pre>
        *
        * <code>optional string trace_archival_retention = 5;</code>
@@ -277989,7 +278000,8 @@ public final class Service {
       }
       /**
        * <pre>
-       * Optional archival retention override for this workspace.
+       * Optional archival retention override for this workspace. Format: &lt;int&gt;&lt;unit&gt;,
+       * for example 30d.
        * </pre>
        *
        * <code>optional string trace_archival_retention = 5;</code>
@@ -279512,7 +279524,8 @@ public final class Service {
 
     /**
      * <pre>
-     * Optional archival retention override to apply at creation time.
+     * Optional archival retention override to apply at creation time. Format:
+     * &lt;int&gt;&lt;unit&gt;, for example 30d.
      * </pre>
      *
      * <code>optional string trace_archival_retention = 5;</code>
@@ -279521,7 +279534,8 @@ public final class Service {
     boolean hasTraceArchivalRetention();
     /**
      * <pre>
-     * Optional archival retention override to apply at creation time.
+     * Optional archival retention override to apply at creation time. Format:
+     * &lt;int&gt;&lt;unit&gt;, for example 30d.
      * </pre>
      *
      * <code>optional string trace_archival_retention = 5;</code>
@@ -279530,7 +279544,8 @@ public final class Service {
     java.lang.String getTraceArchivalRetention();
     /**
      * <pre>
-     * Optional archival retention override to apply at creation time.
+     * Optional archival retention override to apply at creation time. Format:
+     * &lt;int&gt;&lt;unit&gt;, for example 30d.
      * </pre>
      *
      * <code>optional string trace_archival_retention = 5;</code>
@@ -280593,7 +280608,8 @@ public final class Service {
     private volatile java.lang.Object traceArchivalRetention_;
     /**
      * <pre>
-     * Optional archival retention override to apply at creation time.
+     * Optional archival retention override to apply at creation time. Format:
+     * &lt;int&gt;&lt;unit&gt;, for example 30d.
      * </pre>
      *
      * <code>optional string trace_archival_retention = 5;</code>
@@ -280605,7 +280621,8 @@ public final class Service {
     }
     /**
      * <pre>
-     * Optional archival retention override to apply at creation time.
+     * Optional archival retention override to apply at creation time. Format:
+     * &lt;int&gt;&lt;unit&gt;, for example 30d.
      * </pre>
      *
      * <code>optional string trace_archival_retention = 5;</code>
@@ -280628,7 +280645,8 @@ public final class Service {
     }
     /**
      * <pre>
-     * Optional archival retention override to apply at creation time.
+     * Optional archival retention override to apply at creation time. Format:
+     * &lt;int&gt;&lt;unit&gt;, for example 30d.
      * </pre>
      *
      * <code>optional string trace_archival_retention = 5;</code>
@@ -281507,7 +281525,8 @@ public final class Service {
       private java.lang.Object traceArchivalRetention_ = "";
       /**
        * <pre>
-       * Optional archival retention override to apply at creation time.
+       * Optional archival retention override to apply at creation time. Format:
+       * &lt;int&gt;&lt;unit&gt;, for example 30d.
        * </pre>
        *
        * <code>optional string trace_archival_retention = 5;</code>
@@ -281518,7 +281537,8 @@ public final class Service {
       }
       /**
        * <pre>
-       * Optional archival retention override to apply at creation time.
+       * Optional archival retention override to apply at creation time. Format:
+       * &lt;int&gt;&lt;unit&gt;, for example 30d.
        * </pre>
        *
        * <code>optional string trace_archival_retention = 5;</code>
@@ -281540,7 +281560,8 @@ public final class Service {
       }
       /**
        * <pre>
-       * Optional archival retention override to apply at creation time.
+       * Optional archival retention override to apply at creation time. Format:
+       * &lt;int&gt;&lt;unit&gt;, for example 30d.
        * </pre>
        *
        * <code>optional string trace_archival_retention = 5;</code>
@@ -281561,7 +281582,8 @@ public final class Service {
       }
       /**
        * <pre>
-       * Optional archival retention override to apply at creation time.
+       * Optional archival retention override to apply at creation time. Format:
+       * &lt;int&gt;&lt;unit&gt;, for example 30d.
        * </pre>
        *
        * <code>optional string trace_archival_retention = 5;</code>
@@ -281580,7 +281602,8 @@ public final class Service {
       }
       /**
        * <pre>
-       * Optional archival retention override to apply at creation time.
+       * Optional archival retention override to apply at creation time. Format:
+       * &lt;int&gt;&lt;unit&gt;, for example 30d.
        * </pre>
        *
        * <code>optional string trace_archival_retention = 5;</code>
@@ -281594,7 +281617,8 @@ public final class Service {
       }
       /**
        * <pre>
-       * Optional archival retention override to apply at creation time.
+       * Optional archival retention override to apply at creation time. Format:
+       * &lt;int&gt;&lt;unit&gt;, for example 30d.
        * </pre>
        *
        * <code>optional string trace_archival_retention = 5;</code>
@@ -283140,7 +283164,8 @@ public final class Service {
 
     /**
      * <pre>
-     * Optional archival retention override update.
+     * Optional archival retention override update. Format: &lt;int&gt;&lt;unit&gt;, for
+     * example 30d.
      * </pre>
      *
      * <code>optional string trace_archival_retention = 5;</code>
@@ -283149,7 +283174,8 @@ public final class Service {
     boolean hasTraceArchivalRetention();
     /**
      * <pre>
-     * Optional archival retention override update.
+     * Optional archival retention override update. Format: &lt;int&gt;&lt;unit&gt;, for
+     * example 30d.
      * </pre>
      *
      * <code>optional string trace_archival_retention = 5;</code>
@@ -283158,7 +283184,8 @@ public final class Service {
     java.lang.String getTraceArchivalRetention();
     /**
      * <pre>
-     * Optional archival retention override update.
+     * Optional archival retention override update. Format: &lt;int&gt;&lt;unit&gt;, for
+     * example 30d.
      * </pre>
      *
      * <code>optional string trace_archival_retention = 5;</code>
@@ -284221,7 +284248,8 @@ public final class Service {
     private volatile java.lang.Object traceArchivalRetention_;
     /**
      * <pre>
-     * Optional archival retention override update.
+     * Optional archival retention override update. Format: &lt;int&gt;&lt;unit&gt;, for
+     * example 30d.
      * </pre>
      *
      * <code>optional string trace_archival_retention = 5;</code>
@@ -284233,7 +284261,8 @@ public final class Service {
     }
     /**
      * <pre>
-     * Optional archival retention override update.
+     * Optional archival retention override update. Format: &lt;int&gt;&lt;unit&gt;, for
+     * example 30d.
      * </pre>
      *
      * <code>optional string trace_archival_retention = 5;</code>
@@ -284256,7 +284285,8 @@ public final class Service {
     }
     /**
      * <pre>
-     * Optional archival retention override update.
+     * Optional archival retention override update. Format: &lt;int&gt;&lt;unit&gt;, for
+     * example 30d.
      * </pre>
      *
      * <code>optional string trace_archival_retention = 5;</code>
@@ -285135,7 +285165,8 @@ public final class Service {
       private java.lang.Object traceArchivalRetention_ = "";
       /**
        * <pre>
-       * Optional archival retention override update.
+       * Optional archival retention override update. Format: &lt;int&gt;&lt;unit&gt;, for
+       * example 30d.
        * </pre>
        *
        * <code>optional string trace_archival_retention = 5;</code>
@@ -285146,7 +285177,8 @@ public final class Service {
       }
       /**
        * <pre>
-       * Optional archival retention override update.
+       * Optional archival retention override update. Format: &lt;int&gt;&lt;unit&gt;, for
+       * example 30d.
        * </pre>
        *
        * <code>optional string trace_archival_retention = 5;</code>
@@ -285168,7 +285200,8 @@ public final class Service {
       }
       /**
        * <pre>
-       * Optional archival retention override update.
+       * Optional archival retention override update. Format: &lt;int&gt;&lt;unit&gt;, for
+       * example 30d.
        * </pre>
        *
        * <code>optional string trace_archival_retention = 5;</code>
@@ -285189,7 +285222,8 @@ public final class Service {
       }
       /**
        * <pre>
-       * Optional archival retention override update.
+       * Optional archival retention override update. Format: &lt;int&gt;&lt;unit&gt;, for
+       * example 30d.
        * </pre>
        *
        * <code>optional string trace_archival_retention = 5;</code>
@@ -285208,7 +285242,8 @@ public final class Service {
       }
       /**
        * <pre>
-       * Optional archival retention override update.
+       * Optional archival retention override update. Format: &lt;int&gt;&lt;unit&gt;, for
+       * example 30d.
        * </pre>
        *
        * <code>optional string trace_archival_retention = 5;</code>
@@ -285222,7 +285257,8 @@ public final class Service {
       }
       /**
        * <pre>
-       * Optional archival retention override update.
+       * Optional archival retention override update. Format: &lt;int&gt;&lt;unit&gt;, for
+       * example 30d.
        * </pre>
        *
        * <code>optional string trace_archival_retention = 5;</code>
