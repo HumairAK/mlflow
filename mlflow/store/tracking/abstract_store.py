@@ -400,6 +400,33 @@ class AbstractStore(GatewayStoreMixin):
         """
         raise MlflowNotImplementedException()
 
+    def archive_traces(
+        self,
+        *,
+        trace_archival_location: str | None = None,
+        default_retention: str | None = None,
+        long_retention_allowlist: set[str] | list[str] | None = None,
+        max_traces: int = 100,
+        now_millis: int | None = None,
+    ) -> int:
+        """
+        Archive eligible DB-backed trace payloads into the archival repository.
+
+        Args:
+            trace_archival_location: Optional archival repository root. When unset, implementations
+                may fall back to the experiment's effective artifact storage location.
+            default_retention: Optional default retention in the form ``<int><unit>`` where unit
+                is one of ``m``, ``h``, or ``d``.
+            long_retention_allowlist: Experiment IDs allowed to exceed the broader-scope
+                retention with a longer experiment-level retention override.
+            max_traces: Maximum number of traces to archive in this pass.
+            now_millis: Optional current time override for deterministic testing.
+
+        Returns:
+            The number of traces archived during the pass.
+        """
+        raise MlflowNotImplementedException()
+
     def get_online_trace_details(
         self,
         trace_id: str,

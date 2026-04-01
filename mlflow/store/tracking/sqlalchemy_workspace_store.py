@@ -391,6 +391,23 @@ class WorkspaceAwareSqlAlchemyStore(WorkspaceAwareMixin, SqlAlchemyStore):
             self._workspace_provider = get_workspace_store(workspace_uri=self._workspace_store_uri)
         return self._workspace_provider
 
+    def _resolve_workspace_trace_archival_retention(
+        self, default_retention: str | None
+    ) -> str | None:
+        workspace = self._get_workspace_provider_instance().get_workspace(self._get_active_workspace())
+        return workspace.trace_archival_retention or default_retention
+
+    def _resolve_trace_archival_root(
+        self, trace_archival_location: str | None
+    ) -> tuple[str | None, bool]:
+        workspace = self._get_workspace_provider_instance().get_workspace(self._get_active_workspace())
+        if workspace.trace_archival_location:
+            return workspace.trace_archival_location, False
+        return trace_archival_location, True
+
+    def _get_trace_archival_workspace_name(self) -> str | None:
+        return self._get_active_workspace()
+
     def _ensure_default_workspace_experiment(self) -> None:
         """
         Ensure the default experiment exists in the provider's default workspace when enabled.
