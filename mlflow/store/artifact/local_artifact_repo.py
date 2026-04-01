@@ -7,6 +7,7 @@ from mlflow.store.artifact.artifact_repo import (
     try_read_trace_data,
     verify_artifact_path,
 )
+from mlflow.tracing.constant import SpansLocation
 from mlflow.tracing.utils.artifact_utils import TRACE_DATA_FILE_NAME
 from mlflow.utils.file_utils import (
     get_file_info,
@@ -127,7 +128,9 @@ class LocalArtifactRepository(ArtifactRepository):
             else:
                 shutil.rmtree(artifact_path)
 
-    def download_trace_data(self) -> dict[str, Any]:
+    def download_trace_data(
+        self, spans_location: SpansLocation = SpansLocation.ARTIFACT_REPO
+    ) -> dict[str, Any]:
         """
         Download the trace data.
 
@@ -138,5 +141,7 @@ class LocalArtifactRepository(ArtifactRepository):
             - `MlflowTraceDataNotFound`: The trace data is not found.
             - `MlflowTraceDataCorrupted`: The trace data is corrupted.
         """
-        trace_data_path = os.path.join(self.artifact_dir, TRACE_DATA_FILE_NAME)
-        return try_read_trace_data(trace_data_path)
+        if spans_location == SpansLocation.ARTIFACT_REPO:
+            trace_data_path = os.path.join(self.artifact_dir, TRACE_DATA_FILE_NAME)
+            return try_read_trace_data(trace_data_path)
+        return super().download_trace_data(spans_location=spans_location)

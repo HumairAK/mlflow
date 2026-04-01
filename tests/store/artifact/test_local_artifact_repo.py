@@ -258,7 +258,7 @@ def _make_span() -> Span:
         start_time=1_000_000,
         end_time=2_000_000,
         attributes={
-            SpanAttributeKey.REQUEST_ID: "tr-abc123",
+            SpanAttributeKey.REQUEST_ID: json.dumps("tr-abc123"),
             SpanAttributeKey.INPUTS: json.dumps({"q": "hello"}),
             SpanAttributeKey.OUTPUTS: json.dumps({"a": "world"}),
             SpanAttributeKey.SPAN_TYPE: json.dumps("UNKNOWN"),
@@ -267,54 +267,57 @@ def _make_span() -> Span:
     return Span(otel_span)
 
 
-def test_trace_payload_archive_repo_errors(local_artifact_repo):
+def test_trace_data_archive_repo_errors(local_artifact_repo):
     with pytest.raises(MlflowTraceDataNotFound, match=r"Trace data not found for path="):
-        local_artifact_repo.download_trace_payload(spans_location=SpansLocation.ARCHIVE_REPO)
+        local_artifact_repo.download_trace_data(spans_location=SpansLocation.ARCHIVE_REPO)
 
     trace_pb_path = pathlib.Path(local_artifact_repo.artifact_dir, TRACE_ARCHIVAL_FILENAME)
     trace_pb_path.write_bytes(b"")
     with pytest.raises(MlflowTraceDataCorrupted, match=r"Trace data is corrupted for path="):
-        local_artifact_repo.download_trace_payload(spans_location=SpansLocation.ARCHIVE_REPO)
+        local_artifact_repo.download_trace_data(spans_location=SpansLocation.ARCHIVE_REPO)
 
 
-def test_trace_payload_archive_repo_rejects_empty_spans(local_artifact_repo):
+def test_upload_trace_data_archive_repo_rejects_empty_spans(local_artifact_repo):
     with pytest.raises(MlflowException, match="at least one span"):
-        local_artifact_repo.upload_trace_payload(
-            TraceData(spans=[]), spans_location=SpansLocation.ARCHIVE_REPO
+        local_artifact_repo.upload_trace_data(
+            json.dumps({"spans": []}), spans_location=SpansLocation.ARCHIVE_REPO
         )
 
 
-def test_trace_payload_artifact_repo(local_artifact_repo):
-    local_artifact_repo.upload_trace_payload(
-        TraceData(spans=[_make_span()]), spans_location=SpansLocation.ARTIFACT_REPO
+def test_trace_data_artifact_repo(local_artifact_repo):
+    trace_data = TraceData(spans=[_make_span()]).to_dict()
+
+    local_artifact_repo.upload_trace_data(
+        json.dumps(trace_data), spans_location=SpansLocation.ARTIFACT_REPO
     )
 
-    trace_data = local_artifact_repo.download_trace_payload(
+    restored = local_artifact_repo.download_trace_data(
         spans_location=SpansLocation.ARTIFACT_REPO
     )
-    assert len(trace_data.spans) == 1
-    assert trace_data.spans[0].name == "test-span"
+    assert restored == trace_data
 
 
-def test_trace_payload_archive_repo(local_artifact_repo):
-    local_artifact_repo.upload_trace_payload(
-        TraceData(spans=[_make_span()]), spans_location=SpansLocation.ARCHIVE_REPO
+def test_trace_data_archive_repo(local_artifact_repo):
+    trace_data = TraceData(spans=[_make_span()]).to_dict()
+
+    local_artifact_repo.upload_trace_data(
+        json.dumps(trace_data), spans_location=SpansLocation.ARCHIVE_REPO
     )
 
-    trace_data = local_artifact_repo.download_trace_payload(
+    restored = local_artifact_repo.download_trace_data(
         spans_location=SpansLocation.ARCHIVE_REPO
     )
-    assert len(trace_data.spans) == 1
-    assert trace_data.spans[0].name == "test-span"
+    assert restored == trace_data
 
 
-def test_trace_payload_rejects_tracking_store(local_artifact_repo):
+def test_trace_data_rejects_tracking_store(local_artifact_repo):
     with pytest.raises(MlflowException, match="TRACKING_STORE"):
-        local_artifact_repo.download_trace_payload(spans_location=SpansLocation.TRACKING_STORE)
+        local_artifact_repo.download_trace_data(spans_location=SpansLocation.TRACKING_STORE)
 
     with pytest.raises(MlflowException, match="TRACKING_STORE"):
-        local_artifact_repo.upload_trace_payload(
-            TraceData(spans=[_make_span()]), spans_location=SpansLocation.TRACKING_STORE
+        local_artifact_repo.upload_trace_data(
+            json.dumps(TraceData(spans=[_make_span()]).to_dict()),
+            spans_location=SpansLocation.TRACKING_STORE,
         )
 
 
