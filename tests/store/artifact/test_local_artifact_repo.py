@@ -291,9 +291,7 @@ def test_trace_data_artifact_repo(local_artifact_repo):
         json.dumps(trace_data), spans_location=SpansLocation.ARTIFACT_REPO
     )
 
-    restored = local_artifact_repo.download_trace_data(
-        spans_location=SpansLocation.ARTIFACT_REPO
-    )
+    restored = local_artifact_repo.download_trace_data(spans_location=SpansLocation.ARTIFACT_REPO)
     assert restored == trace_data
 
 
@@ -304,9 +302,7 @@ def test_trace_data_archive_repo(local_artifact_repo):
         json.dumps(trace_data), spans_location=SpansLocation.ARCHIVE_REPO
     )
 
-    restored = local_artifact_repo.download_trace_data(
-        spans_location=SpansLocation.ARCHIVE_REPO
-    )
+    restored = local_artifact_repo.download_trace_data(spans_location=SpansLocation.ARCHIVE_REPO)
     assert restored == trace_data
 
 
