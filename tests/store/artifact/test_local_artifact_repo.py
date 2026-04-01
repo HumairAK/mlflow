@@ -11,7 +11,7 @@ from mlflow.entities.trace_data import TraceData
 from mlflow.exceptions import MlflowException, MlflowTraceDataCorrupted, MlflowTraceDataNotFound
 from mlflow.store.artifact.local_artifact_repo import LocalArtifactRepository
 from mlflow.tracing.constant import SpansLocation
-from mlflow.tracing.otel.otel_archival import TRACE_ARCHIVAL_ARTIFACT_PATH, TRACE_ARCHIVAL_FILENAME
+from mlflow.tracing.otel.otel_archival import TRACE_ARCHIVAL_FILENAME
 from mlflow.tracing.utils import build_otel_context
 from mlflow.utils.file_utils import TempDir
 
@@ -271,9 +271,7 @@ def test_trace_payload_archive_repo_errors(local_artifact_repo):
     with pytest.raises(MlflowTraceDataNotFound, match=r"Trace data not found for path="):
         local_artifact_repo.download_trace_payload(spans_location=SpansLocation.ARCHIVE_REPO)
 
-    artifact_path = pathlib.Path(local_artifact_repo.artifact_dir, TRACE_ARCHIVAL_ARTIFACT_PATH)
-    artifact_path.mkdir(parents=True, exist_ok=True)
-    trace_pb_path = artifact_path / TRACE_ARCHIVAL_FILENAME
+    trace_pb_path = pathlib.Path(local_artifact_repo.artifact_dir, TRACE_ARCHIVAL_FILENAME)
     trace_pb_path.write_bytes(b"")
     with pytest.raises(MlflowTraceDataCorrupted, match=r"Trace data is corrupted for path="):
         local_artifact_repo.download_trace_payload(spans_location=SpansLocation.ARCHIVE_REPO)

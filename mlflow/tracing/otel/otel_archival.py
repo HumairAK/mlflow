@@ -10,7 +10,6 @@ from mlflow.entities.span import Span
 from mlflow.exceptions import MlflowException
 from mlflow.tracing.utils.otlp import resource_to_otel_proto
 
-TRACE_ARCHIVAL_ARTIFACT_PATH = "artifacts"
 TRACE_ARCHIVAL_FILENAME = "traces.pb"
 
 

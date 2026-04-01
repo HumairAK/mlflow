@@ -14,7 +14,6 @@ from mlflow.entities.span import Span
 from mlflow.exceptions import MlflowException
 from mlflow.tracing.constant import SpanAttributeKey
 from mlflow.tracing.otel.otel_archival import (
-    TRACE_ARCHIVAL_ARTIFACT_PATH,
     TRACE_ARCHIVAL_FILENAME,
     spans_to_traces_data_pb,
     traces_data_pb_to_spans,
@@ -149,10 +148,6 @@ def test_rejects_valid_but_spanless_payload():
 
     with pytest.raises(MlflowException, match="contain at least one span"):
         traces_data_pb_to_spans(traces_data.SerializeToString())
-
-
-def test_artifact_path_constant():
-    assert TRACE_ARCHIVAL_ARTIFACT_PATH == "artifacts"
 
 
 def test_filename_constant():
