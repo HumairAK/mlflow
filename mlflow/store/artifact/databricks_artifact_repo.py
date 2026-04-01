@@ -61,7 +61,7 @@ from mlflow.store.artifact.databricks_artifact_repo_resources import (
     _Run,
     _Trace,
 )
-from mlflow.tracing.constant import TRACE_REQUEST_ID_PREFIX
+from mlflow.tracing.constant import SpansLocation, TRACE_REQUEST_ID_PREFIX
 from mlflow.utils import chunk_list
 from mlflow.utils.databricks_utils import get_databricks_host_creds
 from mlflow.utils.file_utils import (
@@ -251,7 +251,15 @@ class DatabricksArtifactRepository(CloudArtifactRepository):
         ]
         return self._get_credential_infos(_CredentialType.WRITE, relative_remote_paths)
 
-    def download_trace_data(self) -> dict[str, Any]:
+    def download_trace_data(
+        self, spans_location: SpansLocation = SpansLocation.ARTIFACT_REPO
+    ) -> dict[str, Any]:
+        if spans_location != SpansLocation.ARTIFACT_REPO:
+            raise MlflowException.invalid_parameter_value(
+                "Databricks trace artifact repositories currently only support "
+                f"{SpansLocation.ARTIFACT_REPO.value}; got {spans_location!r}."
+            )
+
         [cred], _ = self.resource.get_credentials(cred_type=_CredentialType.READ)
         signed_uri = cred.signed_uri
         headers = self._extract_headers_from_credentials(cred.headers)
@@ -268,7 +276,15 @@ class DatabricksArtifactRepository(CloudArtifactRepository):
             except json.JSONDecodeError as e:
                 raise MlflowTraceDataCorrupted(request_id=self.resource.id) from e
 
-    def upload_trace_data(self, trace_data: str) -> None:
+    def upload_trace_data(
+        self, trace_data: str, spans_location: SpansLocation = SpansLocation.ARTIFACT_REPO
+    ) -> None:
+        if spans_location != SpansLocation.ARTIFACT_REPO:
+            raise MlflowException.invalid_parameter_value(
+                "Databricks trace artifact repositories currently only support "
+                f"{SpansLocation.ARTIFACT_REPO.value}; got {spans_location!r}."
+            )
+
         cred = self._get_upload_trace_data_cred_info()
         with write_local_temp_trace_data_file(trace_data) as temp_file:
             # Upload trace data synchronously to avoid ThreadPoolExecutor deadlock during Python

@@ -379,9 +379,15 @@ class ArtifactRepository:
         num_cpus = os.cpu_count() or _NUM_DEFAULT_CPUS
         return min(num_cpus * _NUM_MAX_THREADS_PER_CPU, _NUM_MAX_THREADS)
 
-    def download_trace_data(self) -> dict[str, Any]:
+    def download_trace_data(
+        self, spans_location: SpansLocation = SpansLocation.ARTIFACT_REPO
+    ) -> dict[str, Any]:
         """
-        Download the trace data.
+        Download the trace data as a dictionary.
+
+        Args:
+            spans_location: ``ARTIFACT_REPO`` for the JSON trace-data payload or
+                ``ARCHIVE_REPO`` for the OTLP protobuf archive payload.
 
         Returns:
             The trace data as a dictionary.
@@ -390,15 +396,24 @@ class ArtifactRepository:
             - `MlflowTraceDataNotFound`: The trace data is not found.
             - `MlflowTraceDataCorrupted`: The trace data is corrupted.
         """
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_file = Path(temp_dir, TRACE_DATA_FILE_NAME)
-            try:
-                self._download_file(TRACE_DATA_FILE_NAME, temp_file)
-            except Exception as e:
-                # `MlflowTraceDataNotFound` is caught in `TrackingServiceClient.search_traces` and
-                # is used to filter out traces with failed trace data download.
-                raise MlflowTraceDataNotFound(artifact_path=TRACE_DATA_FILE_NAME) from e
-            return try_read_trace_data(temp_file)
+        if spans_location == SpansLocation.ARTIFACT_REPO:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                temp_file = Path(temp_dir, TRACE_DATA_FILE_NAME)
+                try:
+                    self._download_file(TRACE_DATA_FILE_NAME, temp_file)
+                except Exception as e:
+                    # `MlflowTraceDataNotFound` is caught in `TrackingServiceClient.search_traces`
+                    # and is used to filter out traces with failed trace data download.
+                    raise MlflowTraceDataNotFound(artifact_path=TRACE_DATA_FILE_NAME) from e
+                return try_read_trace_data(temp_file)
+        if spans_location == SpansLocation.ARCHIVE_REPO:
+            return TraceData(spans=self._download_trace_data_pb()).to_dict()
+
+        raise MlflowException.invalid_parameter_value(
+            "Artifact repositories only support trace payloads stored in "
+            f"{SpansLocation.ARTIFACT_REPO.value} or {SpansLocation.ARCHIVE_REPO.value}; "
+            f"got {spans_location!r}."
+        )
 
     def _download_trace_data_pb(self) -> list["Span"]:
         """
@@ -417,30 +432,6 @@ class ArtifactRepository:
                 raise MlflowTraceDataNotFound(artifact_path=TRACE_ARCHIVAL_FILENAME) from e
             return _try_read_trace_data_pb(temp_file)
 
-    def download_trace_payload(
-        self, spans_location: SpansLocation = SpansLocation.ARTIFACT_REPO
-    ) -> TraceData:
-        """
-        Download trace payload data without exposing the underlying storage format.
-
-        Args:
-            spans_location: ``ARTIFACT_REPO`` for the legacy JSON trace-data payload or
-                ``ARCHIVE_REPO`` for the OTLP protobuf archive payload.
-
-        Returns:
-            The trace payload as a ``TraceData`` object.
-        """
-        if spans_location == SpansLocation.ARTIFACT_REPO:
-            return TraceData.from_dict(self.download_trace_data())
-        if spans_location == SpansLocation.ARCHIVE_REPO:
-            return TraceData(spans=self._download_trace_data_pb())
-
-        raise MlflowException.invalid_parameter_value(
-            "Artifact repositories only support trace payloads stored in "
-            f"{SpansLocation.ARTIFACT_REPO.value} or {SpansLocation.ARCHIVE_REPO.value}; "
-            f"got {spans_location!r}."
-        )
-
     def download_trace_attachment(self, path: str) -> bytes:
         _validate_attachment_path(path)
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -448,15 +439,36 @@ class ArtifactRepository:
             self._download_file(posixpath.join("attachments", path), temp_file)
             return temp_file.read_bytes()
 
-    def upload_trace_data(self, trace_data: str) -> None:
+    def upload_trace_data(
+        self, trace_data: str, spans_location: SpansLocation = SpansLocation.ARTIFACT_REPO
+    ) -> None:
         """
         Upload the trace data.
 
         Args:
             trace_data: The json-serialized trace data to upload.
+            spans_location: ``ARTIFACT_REPO`` for the legacy JSON trace-data payload or
+                ``ARCHIVE_REPO`` for the OTLP protobuf archive payload.
         """
-        with write_local_temp_trace_data_file(trace_data) as temp_file:
-            self.log_artifact(temp_file)
+        if spans_location == SpansLocation.ARTIFACT_REPO:
+            with write_local_temp_trace_data_file(trace_data) as temp_file:
+                self.log_artifact(temp_file)
+            return
+        if spans_location == SpansLocation.ARCHIVE_REPO:
+            try:
+                spans = TraceData.from_dict(json.loads(trace_data)).spans
+            except (TypeError, json.JSONDecodeError) as e:
+                raise MlflowException.invalid_parameter_value(
+                    "Trace data for ARCHIVE_REPO must be valid serialized trace-data JSON."
+                ) from e
+            self._upload_trace_data_pb(spans)
+            return
+
+        raise MlflowException.invalid_parameter_value(
+            "Artifact repositories only support trace payloads stored in "
+            f"{SpansLocation.ARTIFACT_REPO.value} or {SpansLocation.ARCHIVE_REPO.value}; "
+            f"got {spans_location!r}."
+        )
 
     def _upload_trace_data_pb(self, spans: list["Span"]) -> None:
         """
@@ -467,37 +479,6 @@ class ArtifactRepository:
         data = spans_to_traces_data_pb(spans)
         with _write_local_temp_trace_data_pb_file(data) as temp_file:
             self.log_artifact(temp_file)
-
-    def upload_trace_payload(
-        self,
-        trace_data: TraceData,
-        spans_location: SpansLocation = SpansLocation.ARTIFACT_REPO,
-    ) -> None:
-        """
-        Upload trace payload data without exposing the underlying storage format.
-
-        Args:
-            trace_data: The trace payload to upload.
-            spans_location: ``ARTIFACT_REPO`` for the legacy JSON trace-data payload or
-                ``ARCHIVE_REPO`` for the OTLP protobuf archive payload.
-        """
-        if spans_location == SpansLocation.ARTIFACT_REPO:
-            from mlflow.tracing.utils import TraceJSONEncoder
-
-            trace_data_json = json.dumps(
-                trace_data.to_dict(), cls=TraceJSONEncoder, ensure_ascii=False
-            )
-            self.upload_trace_data(trace_data_json)
-            return
-        if spans_location == SpansLocation.ARCHIVE_REPO:
-            self._upload_trace_data_pb(trace_data.spans)
-            return
-
-        raise MlflowException.invalid_parameter_value(
-            "Artifact repositories only support trace payloads stored in "
-            f"{SpansLocation.ARTIFACT_REPO.value} or {SpansLocation.ARCHIVE_REPO.value}; "
-            f"got {spans_location!r}."
-        )
 
     def upload_attachment(self, attachment_id: str, content_bytes: bytes) -> None:
         _validate_attachment_path(attachment_id)
