@@ -59,6 +59,16 @@ def traces_data_pb_to_spans(data: bytes) -> list[Span]:
 
     traces_data = TracesData()
     traces_data.ParseFromString(data)
+    # Archived payloads use a single canonical OTLP wrapper shape. MLflow's trace model is a flat
+    # list of spans and does not preserve ResourceSpans / ScopeSpans groupings as first-class data.
+    if len(traces_data.resource_spans) != 1:
+        raise MlflowException.invalid_parameter_value(
+            "Archived trace payload must contain exactly one ResourceSpans group."
+        )
+    if len(traces_data.resource_spans[0].scope_spans) != 1:
+        raise MlflowException.invalid_parameter_value(
+            "Archived trace payload must contain exactly one ScopeSpans group."
+        )
     spans = [
         Span.from_otel_proto(otel_span)
         for resource_spans in traces_data.resource_spans

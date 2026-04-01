@@ -61,7 +61,7 @@ from mlflow.store.artifact.databricks_artifact_repo_resources import (
     _Run,
     _Trace,
 )
-from mlflow.tracing.constant import SpansLocation, TRACE_REQUEST_ID_PREFIX
+from mlflow.tracing.constant import TRACE_REQUEST_ID_PREFIX, SpansLocation
 from mlflow.utils import chunk_list
 from mlflow.utils.databricks_utils import get_databricks_host_creds
 from mlflow.utils.file_utils import (

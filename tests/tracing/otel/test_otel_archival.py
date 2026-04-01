@@ -119,6 +119,33 @@ def test_rejects_multiple_otlp_trace_ids_on_deserialize():
         traces_data_pb_to_spans(traces_data.SerializeToString())
 
 
+def test_rejects_multiple_resource_spans_groups_on_deserialize():
+    traces_data = TracesData()
+    traces_data.resource_spans.add().scope_spans.add().spans.extend([
+        _make_span(trace_id=1, span_id=10).to_otel_proto()
+    ])
+    traces_data.resource_spans.add().scope_spans.add().spans.extend([
+        _make_span(trace_id=1, span_id=20).to_otel_proto()
+    ])
+
+    with pytest.raises(MlflowException, match="exactly one ResourceSpans group"):
+        traces_data_pb_to_spans(traces_data.SerializeToString())
+
+
+def test_rejects_multiple_scope_spans_groups_on_deserialize():
+    traces_data = TracesData()
+    resource_spans = traces_data.resource_spans.add()
+    resource_spans.scope_spans.add().spans.extend([
+        _make_span(trace_id=1, span_id=10).to_otel_proto()
+    ])
+    resource_spans.scope_spans.add().spans.extend([
+        _make_span(trace_id=1, span_id=20).to_otel_proto()
+    ])
+
+    with pytest.raises(MlflowException, match="exactly one ScopeSpans group"):
+        traces_data_pb_to_spans(traces_data.SerializeToString())
+
+
 def test_rejects_mixed_resources():
     spans = [
         _make_span(
