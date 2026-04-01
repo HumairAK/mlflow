@@ -402,23 +402,19 @@ class ArtifactRepository:
 
     def _download_trace_data_pb(self) -> list["Span"]:
         """
-        Download archived trace span data from ``artifacts/traces.pb``.
+        Download archived trace span data from ``traces.pb``.
 
         Returns:
             The archived spans as MLflow ``Span`` entities.
         """
-        from mlflow.tracing.otel.otel_archival import (
-            TRACE_ARCHIVAL_ARTIFACT_PATH,
-            TRACE_ARCHIVAL_FILENAME,
-        )
+        from mlflow.tracing.otel.otel_archival import TRACE_ARCHIVAL_FILENAME
 
-        trace_pb_path = f"{TRACE_ARCHIVAL_ARTIFACT_PATH}/{TRACE_ARCHIVAL_FILENAME}"
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_file = Path(temp_dir, TRACE_ARCHIVAL_FILENAME)
             try:
-                self._download_file(trace_pb_path, temp_file)
+                self._download_file(TRACE_ARCHIVAL_FILENAME, temp_file)
             except Exception as e:
-                raise MlflowTraceDataNotFound(artifact_path=trace_pb_path) from e
+                raise MlflowTraceDataNotFound(artifact_path=TRACE_ARCHIVAL_FILENAME) from e
             return _try_read_trace_data_pb(temp_file)
 
     def download_trace_payload(
@@ -464,16 +460,13 @@ class ArtifactRepository:
 
     def _upload_trace_data_pb(self, spans: list["Span"]) -> None:
         """
-        Upload archived trace span data as OTLP protobuf to ``artifacts/traces.pb``.
+        Upload archived trace span data as OTLP protobuf to ``traces.pb``.
         """
-        from mlflow.tracing.otel.otel_archival import (
-            TRACE_ARCHIVAL_ARTIFACT_PATH,
-            spans_to_traces_data_pb,
-        )
+        from mlflow.tracing.otel.otel_archival import spans_to_traces_data_pb
 
         data = spans_to_traces_data_pb(spans)
         with _write_local_temp_trace_data_pb_file(data) as temp_file:
-            self.log_artifact(temp_file, artifact_path=TRACE_ARCHIVAL_ARTIFACT_PATH)
+            self.log_artifact(temp_file)
 
     def upload_trace_payload(
         self,
