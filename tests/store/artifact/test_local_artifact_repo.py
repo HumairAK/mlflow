@@ -10,8 +10,7 @@ from mlflow.entities.span import Span, SpanAttributeKey
 from mlflow.entities.trace_data import TraceData
 from mlflow.exceptions import MlflowException, MlflowTraceDataCorrupted, MlflowTraceDataNotFound
 from mlflow.store.artifact.local_artifact_repo import LocalArtifactRepository
-from mlflow.tracing.constant import SpansLocation
-from mlflow.tracing.otel.otel_archival import TRACE_ARCHIVAL_FILENAME
+from mlflow.tracing.otel.otel_archival import TRACE_ARCHIVAL_FILENAME, spans_to_traces_data_pb
 from mlflow.tracing.utils import build_otel_context
 from mlflow.utils.file_utils import TempDir
 
@@ -267,54 +266,55 @@ def _make_span() -> Span:
     return Span(otel_span)
 
 
-def test_trace_data_archive_repo_errors(local_artifact_repo):
+def test_archived_trace_data_errors(local_artifact_repo):
     with pytest.raises(MlflowTraceDataNotFound, match=r"Trace data not found for path="):
-        local_artifact_repo.download_trace_data(spans_location=SpansLocation.ARCHIVE_REPO)
+        local_artifact_repo.download_archived_trace_data()
 
     trace_pb_path = pathlib.Path(local_artifact_repo.artifact_dir, TRACE_ARCHIVAL_FILENAME)
     trace_pb_path.write_bytes(b"")
     with pytest.raises(MlflowTraceDataCorrupted, match=r"Trace data is corrupted for path="):
-        local_artifact_repo.download_trace_data(spans_location=SpansLocation.ARCHIVE_REPO)
+        local_artifact_repo.download_archived_trace_data()
 
 
-def test_upload_trace_data_archive_repo_rejects_empty_spans(local_artifact_repo):
+def test_upload_archived_trace_data_rejects_empty_spans(local_artifact_repo):
     with pytest.raises(MlflowException, match="at least one span"):
-        local_artifact_repo.upload_trace_data(
-            json.dumps({"spans": []}), spans_location=SpansLocation.ARCHIVE_REPO
-        )
+        local_artifact_repo.upload_archived_trace_data(json.dumps({"spans": []}))
 
 
 def test_trace_data_artifact_repo(local_artifact_repo):
     trace_data = TraceData(spans=[_make_span()]).to_dict()
 
-    local_artifact_repo.upload_trace_data(
-        json.dumps(trace_data), spans_location=SpansLocation.ARTIFACT_REPO
-    )
+    local_artifact_repo.upload_trace_data(json.dumps(trace_data))
 
-    restored = local_artifact_repo.download_trace_data(spans_location=SpansLocation.ARTIFACT_REPO)
+    restored = local_artifact_repo.download_trace_data()
     assert restored == trace_data
 
 
-def test_trace_data_archive_repo(local_artifact_repo):
+def test_archived_trace_data_with_serialized_json(local_artifact_repo):
     trace_data = TraceData(spans=[_make_span()]).to_dict()
 
-    local_artifact_repo.upload_trace_data(
-        json.dumps(trace_data), spans_location=SpansLocation.ARCHIVE_REPO
-    )
+    local_artifact_repo.upload_archived_trace_data(json.dumps(trace_data))
 
-    restored = local_artifact_repo.download_trace_data(spans_location=SpansLocation.ARCHIVE_REPO)
-    assert restored == trace_data
+    restored = local_artifact_repo.download_archived_trace_data()
+    assert restored.to_dict() == trace_data
 
 
-def test_trace_data_rejects_tracking_store(local_artifact_repo):
-    with pytest.raises(MlflowException, match="TRACKING_STORE"):
-        local_artifact_repo.download_trace_data(spans_location=SpansLocation.TRACKING_STORE)
+def test_archived_trace_data_with_trace_data_object(local_artifact_repo):
+    trace_data = TraceData(spans=[_make_span()])
 
-    with pytest.raises(MlflowException, match="TRACKING_STORE"):
-        local_artifact_repo.upload_trace_data(
-            json.dumps(TraceData(spans=[_make_span()]).to_dict()),
-            spans_location=SpansLocation.TRACKING_STORE,
-        )
+    local_artifact_repo.upload_archived_trace_data(trace_data)
+
+    restored = local_artifact_repo.download_archived_trace_data()
+    assert restored.to_dict() == trace_data.to_dict()
+
+
+def test_upload_archived_trace_data_bytes(local_artifact_repo):
+    trace_data = TraceData(spans=[_make_span()])
+
+    local_artifact_repo.upload_archived_trace_data_bytes(spans_to_traces_data_pb(trace_data.spans))
+
+    restored = local_artifact_repo.download_archived_trace_data()
+    assert restored.to_dict() == trace_data.to_dict()
 
 
 @pytest.fixture

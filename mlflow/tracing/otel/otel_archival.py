@@ -4,6 +4,9 @@ Helpers for serializing archived trace spans as OTLP ``TracesData`` protobuf.
 
 from __future__ import annotations
 
+from typing import Any
+
+from google.protobuf.message import DecodeError
 from opentelemetry.proto.trace.v1.trace_pb2 import TracesData
 
 from mlflow.entities.span import Span
@@ -11,6 +14,28 @@ from mlflow.exceptions import MlflowException
 from mlflow.tracing.utils.otlp import resource_to_otel_proto
 
 TRACE_ARCHIVAL_FILENAME = "traces.pb"
+
+
+def normalize_otel_resource_attributes(resource) -> tuple[tuple[str, Any], ...]:
+    """Convert resource attributes into an order-insensitive comparable representation."""
+    if resource is None:
+        return ()
+
+    return tuple(
+        (str(key), _normalize_otel_resource_attribute_value(value))
+        for key, value in sorted(resource.attributes.items(), key=lambda item: str(item[0]))
+    )
+
+
+def _normalize_otel_resource_attribute_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return tuple(
+            (str(key), _normalize_otel_resource_attribute_value(nested_value))
+            for key, nested_value in sorted(value.items(), key=lambda item: str(item[0]))
+        )
+    if isinstance(value, (list, tuple)):
+        return tuple(_normalize_otel_resource_attribute_value(item) for item in value)
+    return value
 
 
 def spans_to_traces_data_pb(spans: list[Span]) -> bytes:
@@ -33,9 +58,11 @@ def spans_to_traces_data_pb(spans: list[Span]) -> bytes:
         )
 
     resource = getattr(spans[0]._span, "resource", None)
+    normalized_resource = normalize_otel_resource_attributes(resource)
     resource_proto = resource_to_otel_proto(resource)
     if any(
-        resource_to_otel_proto(getattr(span._span, "resource", None)) != resource_proto
+        normalize_otel_resource_attributes(getattr(span._span, "resource", None))
+        != normalized_resource
         for span in spans[1:]
     ):
         raise MlflowException.invalid_parameter_value(
@@ -58,7 +85,12 @@ def traces_data_pb_to_spans(data: bytes) -> list[Span]:
         )
 
     traces_data = TracesData()
-    traces_data.ParseFromString(data)
+    try:
+        traces_data.ParseFromString(data)
+    except DecodeError as e:
+        raise MlflowException.invalid_parameter_value(
+            "Archived trace payload must be a valid OTLP TracesData protobuf."
+        ) from e
     # Archived payloads use a single canonical OTLP wrapper shape. MLflow's trace model is a flat
     # list of spans and does not preserve ResourceSpans / ScopeSpans groupings as first-class data.
     if len(traces_data.resource_spans) != 1:

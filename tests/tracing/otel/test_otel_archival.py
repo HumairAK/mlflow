@@ -164,9 +164,39 @@ def test_rejects_mixed_resources():
         spans_to_traces_data_pb(spans)
 
 
+def test_accepts_equivalent_resources_with_different_attribute_order():
+    resource_a = OTelResource.create({
+        "service.name": "svc-a",
+        "deployment.environment.name": "test",
+    })
+    resource_b = OTelResource.create({
+        "deployment.environment.name": "test",
+        "service.name": "svc-a",
+    })
+
+    payload = spans_to_traces_data_pb([
+        _make_span(trace_id=1, span_id=10, resource=resource_a),
+        _make_span(trace_id=1, span_id=20, resource=resource_b),
+    ])
+    traces_data = TracesData()
+    traces_data.ParseFromString(payload)
+
+    attrs = {
+        attr.key: _decode_otel_proto_anyvalue(attr.value)
+        for attr in traces_data.resource_spans[0].resource.attributes
+    }
+    assert attrs["service.name"] == "svc-a"
+    assert attrs["deployment.environment.name"] == "test"
+
+
 def test_rejects_empty_bytes():
     with pytest.raises(MlflowException, match="non-empty OTLP TracesData protobuf"):
         traces_data_pb_to_spans(TracesData().SerializeToString())
+
+
+def test_rejects_invalid_protobuf_bytes():
+    with pytest.raises(MlflowException, match="valid OTLP TracesData protobuf"):
+        traces_data_pb_to_spans(b"not protobuf")
 
 
 def test_rejects_valid_but_spanless_payload():

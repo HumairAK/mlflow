@@ -31,7 +31,6 @@ from mlflow.store.artifact.databricks_artifact_repo import (
     DatabricksArtifactRepository,
 )
 from mlflow.store.artifact.databricks_artifact_repo_resources import _CredentialType
-from mlflow.tracing.constant import SpansLocation
 
 DATABRICKS_ARTIFACT_REPOSITORY_PACKAGE = "mlflow.store.artifact.databricks_artifact_repo"
 CLOUD_ARTIFACT_REPOSITORY_PACKAGE = "mlflow.store.artifact.cloud_artifact_repo"
@@ -1645,11 +1644,9 @@ def test_download_trace_data(databricks_artifact_repo_trace, cred_type):
         assert TraceData.from_dict(trace_data) == TraceData(spans=[])
 
 
-def test_download_trace_data_rejects_archive_repo(databricks_artifact_repo_trace):
-    with pytest.raises(MlflowException, match="currently only support ARTIFACT_REPO"):
-        databricks_artifact_repo_trace.download_trace_data(
-            spans_location=SpansLocation.ARCHIVE_REPO
-        )
+def test_download_archived_trace_data_rejects_archive_repo(databricks_artifact_repo_trace):
+    with pytest.raises(MlflowException, match="do not yet support ARCHIVE_REPO"):
+        databricks_artifact_repo_trace.download_archived_trace_data()
 
 
 @pytest.mark.parametrize(
@@ -1677,11 +1674,14 @@ def test_upload_trace_data(databricks_artifact_repo_trace, cred_type):
     mock_thread_pool.submit.assert_not_called()
 
 
-def test_upload_trace_data_rejects_archive_repo(databricks_artifact_repo_trace):
-    with pytest.raises(MlflowException, match="currently only support ARTIFACT_REPO"):
-        databricks_artifact_repo_trace.upload_trace_data(
-            json.dumps({"spans": []}), spans_location=SpansLocation.ARCHIVE_REPO
-        )
+def test_upload_archived_trace_data_rejects_archive_repo(databricks_artifact_repo_trace):
+    with pytest.raises(MlflowException, match="do not yet support ARCHIVE_REPO"):
+        databricks_artifact_repo_trace.upload_archived_trace_data(json.dumps({"spans": []}))
+
+
+def test_upload_archived_trace_data_bytes_rejects_archive_repo(databricks_artifact_repo_trace):
+    with pytest.raises(MlflowException, match="do not yet support ARCHIVE_REPO"):
+        databricks_artifact_repo_trace.upload_archived_trace_data_bytes(b"trace-data")
 
 
 @pytest.mark.parametrize(
