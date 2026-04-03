@@ -14090,9 +14090,9 @@ def test_archive_traces_archives_db_backed_trace_payloads(store: SqlAlchemyStore
 
         archived_trace_data = get_artifact_repository(
             trace_info.tags[MLFLOW_ARTIFACT_LOCATION]
-        ).download_trace_payload(spans_location=SpansLocation.ARCHIVE_REPO)
-        assert len(archived_trace_data.spans) == 1
-        assert archived_trace_data.spans[0].name == "test_span"
+        ).download_trace_data(spans_location=SpansLocation.ARCHIVE_REPO)
+        assert len(archived_trace_data["spans"]) == 1
+        assert archived_trace_data["spans"][0]["name"] == "test_span"
 
         assert (
             store.archive_traces(
@@ -14304,16 +14304,16 @@ def test_archive_traces_noops_when_candidate_becomes_stale(store: SqlAlchemyStor
 
     from mlflow.store.artifact.artifact_repo import ArtifactRepository
 
-    original_upload_trace_payload = ArtifactRepository.upload_trace_payload
+    original_upload_trace_data = ArtifactRepository.upload_trace_data
 
     def upload_and_mutate(self, trace_data, spans_location=SpansLocation.ARTIFACT_REPO):
-        original_upload_trace_payload(self, trace_data, spans_location=spans_location)
+        original_upload_trace_data(self, trace_data, spans_location=spans_location)
         store.log_spans(exp_id, [create_test_span(trace_id, span_id=412)])
 
     with TempDir() as tmp:
         archive_root = Path(tmp.path("archive"))
         archive_root.mkdir()
-        with mock.patch.object(ArtifactRepository, "upload_trace_payload", new=upload_and_mutate):
+        with mock.patch.object(ArtifactRepository, "upload_trace_data", new=upload_and_mutate):
             archived = store.archive_traces(
                 trace_archival_location=archive_root.as_uri(),
                 default_retention="1d",

@@ -5234,8 +5234,8 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
             trace_archival_location=trace_archival_location,
         )
         artifact_repo = get_artifact_repository(artifact_uri)
-        artifact_repo.upload_trace_payload(
-            TraceData(spans=spans),
+        artifact_repo.upload_trace_data(
+            json.dumps(TraceData(spans=spans).to_dict(), cls=TraceJSONEncoder, ensure_ascii=False),
             spans_location=SpansLocation.ARCHIVE_REPO,
         )
         return self._finalize_archived_trace(
