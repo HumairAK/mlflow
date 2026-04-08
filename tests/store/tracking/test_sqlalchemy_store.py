@@ -5057,6 +5057,28 @@ def _create_trace(
     return store.start_trace(trace_info)
 
 
+def _archive_traces(
+    store: SqlAlchemyStore,
+    *,
+    default_trace_archival_location: str,
+    default_retention: str,
+    long_retention_allowlist: set[str] | list[str] | None = None,
+    max_traces: int = 100,
+    now_millis: int | None = None,
+) -> int:
+    kwargs = {
+        "default_trace_archival_location": default_trace_archival_location,
+        "default_retention": default_retention,
+        "long_retention_allowlist": long_retention_allowlist,
+        "max_traces": max_traces,
+    }
+    if now_millis is None:
+        return store.archive_traces(**kwargs)
+
+    with mock.patch.object(store, "_get_archive_traces_now_millis", return_value=now_millis):
+        return store.archive_traces(**kwargs)
+
+
 @pytest.fixture
 def store_with_traces(store):
     exp1 = store.create_experiment("exp1")
@@ -14076,7 +14098,8 @@ def test_archive_traces_archives_db_backed_trace_payloads(
     with TempDir() as tmp:
         archive_root = Path(tmp.path("archive"))
         archive_root.mkdir()
-        archived = store.archive_traces(
+        archived = _archive_traces(
+            store,
             default_trace_archival_location=archive_root.as_uri(),
             default_retention="1d",
             now_millis=now_millis,
@@ -14142,7 +14165,8 @@ def test_archive_traces_archives_db_backed_trace_payloads(
         assert store.batch_get_traces([old_trace_id])[0].data.spans[0].name == "test_span"
 
         assert (
-            store.archive_traces(
+            _archive_traces(
+                store,
                 default_trace_archival_location=archive_root.as_uri(),
                 default_retention="1d",
                 now_millis=now_millis,
@@ -14182,7 +14206,8 @@ def test_archive_traces_preserves_trace_attachment_location(store: SqlAlchemySto
     with TempDir() as tmp:
         archive_root = Path(tmp.path("archive"))
         archive_root.mkdir()
-        archived = store.archive_traces(
+        archived = _archive_traces(
+            store,
             default_trace_archival_location=archive_root.as_uri(),
             default_retention="1d",
             now_millis=now_millis,
@@ -14232,7 +14257,8 @@ def test_archive_traces_raises_when_default_root_is_unset_and_no_workspace_overr
         ],
     )
     with pytest.raises(MlflowException, match="default_trace_archival_location") as exc_info:
-        store.archive_traces(
+        _archive_traces(
+            store,
             default_trace_archival_location=None,
             default_retention="1d",
             now_millis=now_millis,
@@ -14399,7 +14425,8 @@ def test_archive_traces_respects_experiment_retention_and_archive_now(store: Sql
     with TempDir() as tmp:
         archive_root = Path(tmp.path("archive"))
         archive_root.mkdir()
-        archived = store.archive_traces(
+        archived = _archive_traces(
+            store,
             default_trace_archival_location=archive_root.as_uri(),
             default_retention="30d",
             now_millis=now_millis,
@@ -14453,7 +14480,8 @@ def test_archive_traces_skips_regular_pass_when_archive_now_covers_retention(
         _capture_find_archivable_trace_candidates_for_experiments,
     )
 
-    archived = store.archive_traces(
+    archived = _archive_traces(
+        store,
         default_trace_archival_location="s3://archive/default",
         default_retention="30d",
         now_millis=now_millis,
@@ -14556,7 +14584,8 @@ def test_archive_traces_groups_regular_candidate_queries_by_shared_cutoff(
         _capture_find_archivable_trace_candidates_for_experiments,
     )
 
-    archived = store.archive_traces(
+    archived = _archive_traces(
+        store,
         default_trace_archival_location="s3://archive/default",
         default_retention="30d",
         now_millis=now_millis,
@@ -14607,7 +14636,8 @@ def test_archive_traces_chunks_large_experiment_groups_and_keeps_oldest_candidat
     with TempDir() as tmp:
         archive_root = Path(tmp.path("archive"))
         archive_root.mkdir()
-        archived = store.archive_traces(
+        archived = _archive_traces(
+            store,
             default_trace_archival_location=archive_root.as_uri(),
             default_retention="1d",
             max_traces=2,
@@ -14669,7 +14699,8 @@ def test_archive_traces_keeps_regular_pass_when_archive_now_is_narrower(
     with TempDir() as tmp:
         archive_root = Path(tmp.path("archive"))
         archive_root.mkdir()
-        archived = store.archive_traces(
+        archived = _archive_traces(
+            store,
             default_trace_archival_location=archive_root.as_uri(),
             default_retention="30d",
             now_millis=now_millis,
@@ -14712,7 +14743,8 @@ def test_archive_traces_stops_querying_archive_now_groups_once_max_traces_is_rea
     ) as mock_find_candidates, mock.patch.object(
         store, "_archive_trace_candidate", return_value=True
     ) as mock_archive_candidate:
-        archived = store.archive_traces(
+        archived = _archive_traces(
+            store,
             default_trace_archival_location="file:///unused-archive-root",
             default_retention="30d",
             max_traces=1,
@@ -14751,7 +14783,8 @@ def test_archive_traces_stops_querying_regular_groups_once_max_traces_is_reached
     ) as mock_find_candidates, mock.patch.object(
         store, "_archive_trace_candidate", return_value=True
     ) as mock_archive_candidate:
-        archived = store.archive_traces(
+        archived = _archive_traces(
+            store,
             default_trace_archival_location="file:///unused-archive-root",
             default_retention="30d",
             max_traces=1,
@@ -14825,7 +14858,8 @@ def test_archive_traces_respects_workspace_trace_archival_location_overrides(
             ],
         )
 
-        archived = store.archive_traces(
+        archived = _archive_traces(
+            store,
             default_trace_archival_location=server_archive_root.as_uri(),
             default_retention="1d",
             now_millis=now_millis,
@@ -14918,7 +14952,8 @@ def test_archive_traces_respects_workspace_trace_archival_retention(
     with TempDir() as tmp:
         archive_root = Path(tmp.path("archive"))
         archive_root.mkdir()
-        archived = store.archive_traces(
+        archived = _archive_traces(
+            store,
             default_trace_archival_location=archive_root.as_uri(),
             default_retention="30d",
             now_millis=now_millis,
@@ -14990,7 +15025,8 @@ def test_archive_traces_respects_workspace_retention_long_retention_allowlist(
     with TempDir() as tmp:
         archive_root = Path(tmp.path("archive"))
         archive_root.mkdir()
-        archived = store.archive_traces(
+        archived = _archive_traces(
+            store,
             default_trace_archival_location=archive_root.as_uri(),
             default_retention="120d",
             long_retention_allowlist={exp_allowlisted},
@@ -15036,7 +15072,8 @@ def test_archive_traces_noops_when_candidate_becomes_stale(store: SqlAlchemyStor
         with mock.patch.object(
             ArtifactRepository, "upload_archived_trace_data", new=upload_and_mutate
         ):
-            archived = store.archive_traces(
+            archived = _archive_traces(
+                store,
                 default_trace_archival_location=archive_root.as_uri(),
                 default_retention="1d",
                 now_millis=now_millis,
@@ -15117,7 +15154,8 @@ def test_archive_traces_continues_after_upload_failure_and_cleans_up_completed_a
             "upload_archived_trace_data",
             new=upload_with_failure,
         ):
-            archived = store.archive_traces(
+            archived = _archive_traces(
+                store,
                 default_trace_archival_location=archive_root.as_uri(),
                 default_retention="365d",
                 now_millis=now_millis,
@@ -15156,12 +15194,14 @@ def test_archive_traces_marks_malformed_traces_and_excludes_retries(store: SqlAl
     with TempDir() as tmp:
         archive_root = Path(tmp.path("archive"))
         archive_root.mkdir()
-        archived = store.archive_traces(
+        archived = _archive_traces(
+            store,
             default_trace_archival_location=archive_root.as_uri(),
             default_retention="365d",
             now_millis=now_millis,
         )
-        archived_again = store.archive_traces(
+        archived_again = _archive_traces(
+            store,
             default_trace_archival_location=archive_root.as_uri(),
             default_retention="365d",
             now_millis=now_millis,
@@ -15212,7 +15252,8 @@ def test_archive_traces_keeps_archive_now_when_matching_traces_are_transiently_b
     with TempDir() as tmp:
         archive_root = Path(tmp.path("archive"))
         archive_root.mkdir()
-        archived = store.archive_traces(
+        archived = _archive_traces(
+            store,
             default_trace_archival_location=archive_root.as_uri(),
             default_retention="365d",
             now_millis=now_millis,

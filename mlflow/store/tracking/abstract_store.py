@@ -407,7 +407,6 @@ class AbstractStore(GatewayStoreMixin):
         default_retention: str,
         long_retention_allowlist: set[str] | list[str] | None = None,
         max_traces: int = 100,
-        now_millis: int | None = None,
     ) -> int:
         """
         Archive eligible DB-backed trace payloads into the archival repository.
@@ -421,7 +420,6 @@ class AbstractStore(GatewayStoreMixin):
             long_retention_allowlist: Experiment IDs allowed to exceed the broader-scope
                 retention with a longer experiment-level retention override.
             max_traces: Maximum number of traces to archive in this pass.
-            now_millis: Optional current time override for deterministic testing.
 
         Returns:
             The number of traces archived during the pass.

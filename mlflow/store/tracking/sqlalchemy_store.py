@@ -5023,7 +5023,6 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
         default_retention: str,
         long_retention_allowlist: set[str] | list[str] | None = None,
         max_traces: int = 100,
-        now_millis: int | None = None,
     ) -> int:
         if max_traces <= 0:
             raise MlflowException.invalid_parameter_value(
@@ -5036,7 +5035,7 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
         if not default_retention:
             raise MlflowException.invalid_parameter_value("`default_retention` must be provided.")
 
-        now_millis = now_millis or get_current_time_millis()
+        now_millis = self._get_archive_traces_now_millis()
         long_retention_allowlist = {
             str(experiment_id) for experiment_id in long_retention_allowlist or []
         }
@@ -5149,6 +5148,9 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
                 now_millis=now_millis,
             )
         return archived_count
+
+    def _get_archive_traces_now_millis(self) -> int:
+        return get_current_time_millis()
 
     def _resolve_trace_archival_config(
         self,
