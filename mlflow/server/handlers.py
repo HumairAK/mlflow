@@ -334,6 +334,7 @@ from mlflow.utils.validation import (
     _validate_batch_log_api_req,
     _validate_experiment_artifact_location,
     _validate_experiment_artifact_location_length,
+    _validate_trace_archival_retention_string,
     invalid_value,
     missing_value,
 )
@@ -1139,19 +1140,9 @@ def _validate_workspace_trace_archival_retention(value: str | None) -> str | Non
     if not trimmed:
         return ""
 
-    if len(trimmed) > 32:
-        raise MlflowException.invalid_parameter_value(
-            "Invalid value for 'trace_archival_config.retention'. Maximum length is 32 characters."
-        )
-
-    if re.fullmatch(r"[1-9][0-9]*[mhd]", trimmed) is None:
-        raise MlflowException.invalid_parameter_value(
-            "Invalid value for 'trace_archival_config.retention'. Expected a duration in the "
-            "form `<int><unit>`, where unit is one of 'm', 'h', or 'd' (for example '30d' "
-            "or '12h')."
-        )
-
-    return trimmed
+    return _validate_trace_archival_retention_string(
+        trimmed, parameter_name="trace_archival_config.retention"
+    )
 
 
 def _get_workspace_request_message(
