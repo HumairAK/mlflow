@@ -163,10 +163,23 @@ class WorkspaceAwareSqlAlchemyStore(WorkspaceAwareMixin, SqlAlchemyStore):
                 .filter(SqlExperiment.workspace == workspace)
                 .subquery()
             )
-            return SqlAlchemyStore._get_query(self, session, SqlTraceInfo).filter(
+            query = SqlAlchemyStore._get_query(self, session, SqlTraceInfo).filter(
                 SqlTraceInfo.experiment_id.in_(select(workspace_experiment_ids.c.experiment_id))
             )
+            return self._apply_trace_row_lock(query)
         return super()._trace_query(session, for_update_or_delete=False)
+
+    def _trace_mutation_query(self, session):
+        workspace = self._get_active_workspace()
+        workspace_experiment_ids = (
+            session
+            .query(SqlExperiment.experiment_id)
+            .filter(SqlExperiment.workspace == workspace)
+            .subquery()
+        )
+        return SqlAlchemyStore._get_query(self, session, SqlTraceInfo).filter(
+            SqlTraceInfo.experiment_id.in_(select(workspace_experiment_ids.c.experiment_id))
+        )
 
     def _experiment_where_clauses(self):
         return [SqlExperiment.workspace == self._get_active_workspace()]

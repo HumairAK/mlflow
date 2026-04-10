@@ -956,7 +956,22 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
         return runs[0]
 
     def _trace_query(self, session, for_update_or_delete=False):
+        query = self._get_query(session, SqlTraceInfo)
+        if for_update_or_delete:
+            return self._apply_trace_row_lock(query)
+        return query
+
+    def _trace_mutation_query(self, session):
         return self._get_query(session, SqlTraceInfo)
+
+    def _apply_trace_row_lock(self, query):
+        if self.db_type == MSSQL:
+            return query.with_hint(
+                SqlTraceInfo,
+                "WITH (UPDLOCK, ROWLOCK)",
+                dialect_name="mssql",
+            )
+        return query.with_for_update()
 
     def _dataset_query(self, session):
         return self._get_query(session, SqlEvaluationDataset)
@@ -4099,7 +4114,7 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
 
             return (
                 self
-                ._trace_query(session, for_update_or_delete=True)
+                ._trace_mutation_query(session)
                 .filter(and_(*filters))
                 .delete(synchronize_session="fetch")
             )
@@ -4722,12 +4737,16 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
             )
 
         with self.ManagedSessionMaker() as session:
-            # --- Phase 1: Batch-fetch all existing trace infos (1 query) ---
+            # --- Phase 1: Lock all existing trace infos in a stable order (1 query) ---
+            # Archival and log_spans() coordinate through trace_info row locks. Locking only
+            # existing rows avoids next-key/gap locking on missing traces while still ensuring
+            # that any archival attempt for an existing trace serializes with this write batch.
             existing_traces = {
                 t.request_id: t
                 for t in self
-                ._trace_query(session)
+                ._trace_query(session, for_update_or_delete=True)
                 .filter(SqlTraceInfo.request_id.in_(all_trace_ids))
+                .order_by(SqlTraceInfo.request_id.asc())
                 .all()
             }
 
@@ -4775,8 +4794,9 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
                         existing_traces = {
                             t.request_id: t
                             for t in self
-                            ._trace_query(session)
+                            ._trace_query(session, for_update_or_delete=True)
                             .filter(SqlTraceInfo.request_id.in_(all_trace_ids))
+                            .order_by(SqlTraceInfo.request_id.asc())
                             .all()
                         }
 
@@ -4985,13 +5005,16 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
                         )
 
                 if update_dict:
-                    self._trace_query(session, for_update_or_delete=True).filter(
-                        SqlTraceInfo.request_id == trace_id
-                    ).update(
-                        update_dict,
-                        # Skip session synchronization for performance — we don't
-                        # use the ORM object afterward.
-                        synchronize_session=False,
+                    (
+                        self
+                        ._trace_mutation_query(session)
+                        .filter(SqlTraceInfo.request_id == trace_id)
+                        .update(
+                            update_dict,
+                            # Skip session synchronization for performance — we don't
+                            # use the ORM object afterward.
+                            synchronize_session=False,
+                        )
                     )
             self._raise_if_traces_reject_span_writes(session, all_trace_ids)
 
@@ -5236,16 +5259,12 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
             )
             .all()
         )
-        archived_trace_ids = sorted(
-            {
-                request_id
-                for request_id, key in blocked_rows
-                if key == TraceTagKey.SPANS_LOCATION
-            }
-        )
-        archiving_trace_ids = sorted(
-            {request_id for request_id, key in blocked_rows if key == TraceTagKey.ARCHIVING}
-        )
+        archived_trace_ids = sorted({
+            request_id for request_id, key in blocked_rows if key == TraceTagKey.SPANS_LOCATION
+        })
+        archiving_trace_ids = sorted({
+            request_id for request_id, key in blocked_rows if key == TraceTagKey.ARCHIVING
+        })
         return archived_trace_ids, archiving_trace_ids
 
     def _raise_if_traces_reject_span_writes(
@@ -5254,8 +5273,9 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
         """
         Reject DB-backed span writes for traces that are already archived or currently archiving.
 
-        log_spans() calls this both before and after span upserts so a batch that races with
-        archival is more likely to fail and roll back instead of reasserting TRACKING_STORE.
+        log_spans() calls this both before and after span upserts. Together with the shared
+        trace_info row lock, this ensures cooperating writers either finish before archival marks
+        the trace ARCHIVING or fail and roll back instead of reasserting TRACKING_STORE.
         """
         archived_trace_ids, archiving_trace_ids = self._get_trace_ids_rejecting_span_writes(
             session, trace_ids
@@ -5699,7 +5719,7 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
             sql_trace_info = (
                 self
                 ._trace_query(session, for_update_or_delete=True)
-                .options(joinedload(SqlTraceInfo.tags), joinedload(SqlTraceInfo.spans))
+                .options(selectinload(SqlTraceInfo.tags), selectinload(SqlTraceInfo.spans))
                 .filter(SqlTraceInfo.request_id == trace_id)
                 .one_or_none()
             )
@@ -5853,7 +5873,7 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
             sql_trace_info = (
                 self
                 ._trace_query(session, for_update_or_delete=True)
-                .options(joinedload(SqlTraceInfo.tags), joinedload(SqlTraceInfo.spans))
+                .options(selectinload(SqlTraceInfo.tags), selectinload(SqlTraceInfo.spans))
                 .filter(SqlTraceInfo.request_id == trace_id)
                 .one_or_none()
             )
@@ -5864,13 +5884,11 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
             if not self._is_trace_actionable_for_archival(trace_info, sql_trace_info.spans):
                 return False
 
-            # We intentionally use optimistic concurrency here instead of cross-writer row
-            # locking. Archival assumes terminal traces do not receive late spans: it only
-            # targets traces that are no longer IN_PROGRESS, and if a trace changes before
-            # this re-check we skip finalization and retry on a later pass. Fully
-            # eliminating the remaining TOCTOU gap would require all trace/span writers
-            # (for example log_spans()) to participate in the same locking protocol, which
-            # is a materially larger change.
+            # Archival now shares a trace_info row-locking protocol with log_spans(), which
+            # prevents cooperating span writers from slipping in between this re-check and the
+            # payload clear below. We keep the snapshot comparison as defense in depth for work
+            # that landed before ARCHIVING was committed or any future code path that fails to
+            # participate in the same locking protocol.
             current_snapshot_rows = sorted(
                 (span.span_id, span.content) for span in sql_trace_info.spans
             )
@@ -5929,7 +5947,7 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
             sql_trace_info = (
                 self
                 ._trace_query(session, for_update_or_delete=True)
-                .options(joinedload(SqlTraceInfo.tags), joinedload(SqlTraceInfo.spans))
+                .options(selectinload(SqlTraceInfo.tags), selectinload(SqlTraceInfo.spans))
                 .filter(SqlTraceInfo.request_id == trace_id)
                 .one_or_none()
             )

@@ -18,6 +18,7 @@ from opentelemetry import trace as trace_api
 from opentelemetry.sdk.resources import Resource as _OTelResource
 from opentelemetry.sdk.trace import ReadableSpan as OTelReadableSpan
 from packaging.version import Version
+from sqlalchemy.dialects import mssql, mysql, postgresql
 from sqlalchemy.exc import IntegrityError
 
 import mlflow
@@ -15607,6 +15608,94 @@ def test_archive_traces_resumes_trace_with_stale_archiving_marker(store: SqlAlch
     trace_info = store.get_trace_info(trace_id)
     assert trace_info.tags[TraceTagKey.SPANS_LOCATION] == SpansLocation.ARCHIVE_REPO.value
     assert TraceTagKey.ARCHIVING not in trace_info.tags
+
+
+def test_trace_query_for_update_uses_backend_specific_lock_clause(store: SqlAlchemyStore):
+    exp_id = store.create_experiment("archive-trace-query-lock")
+    trace_id = "tr-archive-trace-query-lock"
+    _create_trace(store, trace_id, exp_id, request_time=42 * 24 * 60 * 60 * 1000)
+
+    with store.ManagedSessionMaker() as session:
+        with mock.patch.object(store, "db_type", POSTGRES):
+            postgres_sql = str(
+                store
+                ._trace_query(session, for_update_or_delete=True)
+                .filter(SqlTraceInfo.request_id == trace_id)
+                .statement.compile(
+                    dialect=postgresql.dialect(),
+                    compile_kwargs={"literal_binds": True},
+                )
+            )
+
+        with mock.patch.object(store, "db_type", MYSQL):
+            mysql_sql = str(
+                store
+                ._trace_query(session, for_update_or_delete=True)
+                .filter(SqlTraceInfo.request_id == trace_id)
+                .statement.compile(
+                    dialect=mysql.dialect(),
+                    compile_kwargs={"literal_binds": True},
+                )
+            )
+
+        with mock.patch.object(store, "db_type", MSSQL):
+            mssql_sql = str(
+                store
+                ._trace_query(session, for_update_or_delete=True)
+                .filter(SqlTraceInfo.request_id == trace_id)
+                .statement.compile(
+                    dialect=mssql.dialect(),
+                    compile_kwargs={"literal_binds": True},
+                )
+            )
+
+    assert "FOR UPDATE" in postgres_sql
+    assert "FOR UPDATE" in mysql_sql
+    assert "WITH (UPDLOCK, ROWLOCK)" in mssql_sql
+
+
+def test_log_spans_locks_existing_traces_before_archival_barrier_check(store: SqlAlchemyStore):
+    exp_id = store.create_experiment("archive-log-spans-lock-order")
+    trace_id = "tr-archive-log-spans-lock-order"
+    request_time = 44 * 24 * 60 * 60 * 1000
+    _create_trace(store, trace_id, exp_id, request_time=request_time)
+
+    call_sequence = []
+    original_with_for_update = sqlalchemy.orm.Query.with_for_update
+    original_raise_if = store._raise_if_traces_reject_span_writes
+
+    def spy_with_for_update(query, *args, **kwargs):
+        call_sequence.append("with_for_update")
+        return original_with_for_update(query, *args, **kwargs)
+
+    def spy_raise_if(session, trace_ids):
+        call_sequence.append("raise_if")
+        return original_raise_if(session, trace_ids)
+
+    with mock.patch.object(
+        sqlalchemy.orm.Query,
+        "with_for_update",
+        autospec=True,
+        side_effect=spy_with_for_update,
+    ):
+        with mock.patch.object(
+            store, "_raise_if_traces_reject_span_writes", side_effect=spy_raise_if
+        ):
+            store.log_spans(
+                exp_id,
+                [
+                    create_test_span(
+                        trace_id,
+                        span_id=432,
+                        start_ns=request_time * 1_000_000,
+                        end_ns=(request_time + 1_000) * 1_000_000,
+                    )
+                ],
+            )
+
+    assert "with_for_update" in call_sequence
+    assert "raise_if" in call_sequence
+    assert call_sequence.index("with_for_update") < call_sequence.index("raise_if")
 
 
 def test_log_spans_rejects_trace_being_archived(store: SqlAlchemyStore):
