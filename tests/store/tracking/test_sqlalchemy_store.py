@@ -14726,6 +14726,15 @@ def test_archive_traces_raises_when_default_retention_is_unset(store: SqlAlchemy
     assert exc_info.value.error_code == ErrorCode.Name(INVALID_PARAMETER_VALUE)
 
 
+def test_archive_traces_rejects_proxy_only_default_root(store: SqlAlchemyStore):
+    with pytest.raises(MlflowException, match="proxy-only `mlflow-artifacts:` scheme") as exc_info:
+        store.archive_traces(
+            default_trace_archival_location="mlflow-artifacts:/archive/default",
+            default_retention="1d",
+        )
+    assert exc_info.value.error_code == ErrorCode.Name(INVALID_PARAMETER_VALUE)
+
+
 def test_archive_traces_raises_when_default_retention_exceeds_max_length(
     store: SqlAlchemyStore,
 ):

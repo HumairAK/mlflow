@@ -240,6 +240,7 @@ from mlflow.utils.validation import (
     _validate_param_keys_unique,
     _validate_run_id,
     _validate_tag,
+    _validate_trace_archival_location,
     _validate_trace_archival_retention_string,
     _validate_trace_tag,
 )
@@ -327,7 +328,8 @@ def _parse_trace_archival_duration_millis(value: str | None) -> int | None:
         return None
 
     trimmed = _validate_trace_archival_retention_string(value)
-    amount, unit = trimmed[:-1], trimmed[-1]
+    amount = trimmed[:-1]
+    unit = trimmed[-1]
     return int(amount) * _TRACE_ARCHIVAL_DURATION_MULTIPLIER_MILLIS[unit]
 
 
@@ -5230,6 +5232,9 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
             raise MlflowException.invalid_parameter_value(
                 "`default_trace_archival_location` must be provided."
             )
+        default_trace_archival_location = _validate_trace_archival_location(
+            default_trace_archival_location, parameter_name="default_trace_archival_location"
+        )
         if not default_retention:
             raise MlflowException.invalid_parameter_value("`default_retention` must be provided.")
 

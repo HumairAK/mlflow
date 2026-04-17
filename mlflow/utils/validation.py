@@ -174,6 +174,31 @@ def _validate_trace_archival_retention_string(
     return trimmed
 
 
+def _validate_trace_archival_location(value: Any, *, parameter_name: str | None = None) -> str:
+    if not is_string_type(value):
+        if parameter_name is not None:
+            raise MlflowException.invalid_parameter_value(
+                f"Invalid value for '{parameter_name}'. Expected a URI string."
+            )
+        raise MlflowException.invalid_parameter_value(
+            "Trace archival location must be a URI string."
+        )
+
+    trimmed = value.strip()
+    parsed = urllib.parse.urlparse(trimmed)
+    if parsed.scheme == "mlflow-artifacts":
+        if parameter_name is not None:
+            raise MlflowException.invalid_parameter_value(
+                f"Invalid value for '{parameter_name}'. Trace archival location cannot use "
+                "the proxy-only `mlflow-artifacts:` scheme."
+            )
+        raise MlflowException.invalid_parameter_value(
+            "Trace archival location cannot use the proxy-only `mlflow-artifacts:` scheme."
+        )
+
+    return trimmed
+
+
 def _parse_trace_archival_duration_config(
     value: str | None,
     *,
