@@ -85,7 +85,6 @@ from mlflow.entities.trace_status import TraceStatus
 from mlflow.exceptions import (
     MlflowException,
     MlflowNotImplementedException,
-    MlflowTraceDataException,
     MlflowTracingException,
 )
 from mlflow.genai.judges.instructions_judge import (
@@ -5166,12 +5165,15 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
             for sql_trace_info in sql_trace_infos:
                 trace_info = sql_trace_info.to_mlflow_entity()
                 # Preserve batch semantics: skip traces whose span payloads cannot be
-                # reconstructed instead of failing the entire batch.
+                # reconstructed instead of failing the entire batch.  Catch the
+                # broader MlflowTracingException so that archive-repo download
+                # failures and non-DB span locations are handled the same way as
+                # corrupt or missing trace data.
                 try:
                     spans = self._get_spans_with_trace_info(
                         trace_info, sql_trace_info.spans, allow_partial=False
                     )
-                except MlflowTraceDataException as e:
+                except MlflowTracingException as e:
                     _logger.warning(
                         "Skipping trace %s during batch_get_traces because its span data could "
                         "not be loaded (%s).",
