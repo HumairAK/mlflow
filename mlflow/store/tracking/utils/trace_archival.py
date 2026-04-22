@@ -4,6 +4,7 @@ import logging
 from dataclasses import dataclass
 from enum import Enum
 
+from mlflow.entities import TraceInfo
 from mlflow.exceptions import MlflowException
 from mlflow.utils.validation import (
     _parse_trace_archival_duration_config,
@@ -19,6 +20,8 @@ _TRACE_ARCHIVAL_DURATION_MULTIPLIER_MILLIS = {
 }
 # Keep grouped experiment scans well below backend parameter limits (notably MSSQL's 2100).
 _TRACE_ARCHIVAL_EXPERIMENT_ID_CHUNK_SIZE = 1000
+# Keep bulk trace deletes below backend bind-parameter limits when deleting an exact row set.
+_TRACE_DELETE_ID_CHUNK_SIZE = 1000
 
 
 class _ArchiveNowRemainingState(str, Enum):
@@ -65,6 +68,25 @@ class _TraceArchiveCandidate:
     trace_id: str
     experiment_id: str
     timestamp_ms: int
+
+
+@dataclass(frozen=True)
+class _TraceDeleteSelection:
+    trace_id: str
+    archived_artifact_uri: str | None = None
+
+
+@dataclass(frozen=True)
+class _TraceSpanSnapshot:
+    content: str
+    parent_span_id: int | None
+    start_time_unix_nano: int
+
+
+@dataclass(frozen=True)
+class _TraceReadSnapshot:
+    trace_info: TraceInfo
+    spans: list[_TraceSpanSnapshot]
 
 
 def _parse_trace_archival_duration_millis(value: str | None) -> int | None:
