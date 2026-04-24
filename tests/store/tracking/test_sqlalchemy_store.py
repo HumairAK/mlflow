@@ -18,7 +18,7 @@ from opentelemetry import trace as trace_api
 from opentelemetry.sdk.resources import Resource as _OTelResource
 from opentelemetry.sdk.trace import ReadableSpan as OTelReadableSpan
 from packaging.version import Version
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 import mlflow
 import mlflow.db
@@ -57,7 +57,13 @@ from mlflow.environment_variables import (
     MLFLOW_ENABLE_WORKSPACES,
     MLFLOW_TRACKING_URI,
 )
-from mlflow.exceptions import MlflowException, MlflowNotImplementedException, MlflowTracingException
+from mlflow.exceptions import (
+    MlflowException,
+    MlflowNotImplementedException,
+    MlflowTraceDataCorrupted,
+    MlflowTraceDataNotFound,
+    MlflowTracingException,
+)
 from mlflow.models import Model
 from mlflow.protos.databricks_pb2 import (
     BAD_REQUEST,
@@ -14519,7 +14525,9 @@ def test_archive_traces_archives_db_backed_trace_payloads(
         )
 
 
-def test_batch_get_traces_skips_archived_traces_with_missing_payload(store: SqlAlchemyStore):
+def test_batch_get_traces_raises_for_archived_traces_with_missing_payload(
+    store: SqlAlchemyStore,
+):
     exp_id = store.create_experiment("archive-batch-get-missing-payload")
     archived_trace_id = "tr-archive-missing-payload"
     healthy_trace_id = "tr-archive-batch-healthy"
@@ -14573,10 +14581,61 @@ def test_batch_get_traces_skips_archived_traces_with_missing_payload(store: SqlA
         assert archive_payload_path.is_file()
         archive_payload_path.unlink()
 
-        traces = store.batch_get_traces([archived_trace_id, healthy_trace_id])
+        with pytest.raises(MlflowTraceDataNotFound, match="Trace data not found"):
+            store.batch_get_traces([archived_trace_id, healthy_trace_id])
 
-    assert [trace.info.trace_id for trace in traces] == [healthy_trace_id]
-    assert traces[0].data.spans[0].name == "test_span"
+
+def test_archived_trace_with_spanless_payload_raises_corruption(
+    store: SqlAlchemyStore,
+):
+    exp_id = store.create_experiment("archive-spanless-payload")
+    trace_id = "tr-archive-spanless-payload"
+    now_millis = 25 * 24 * 60 * 60 * 1000
+    request_time = now_millis - 2 * 24 * 60 * 60 * 1000
+
+    _create_trace(store, trace_id, exp_id, request_time=request_time)
+    store.log_spans(
+        exp_id,
+        [
+            create_test_span(
+                trace_id,
+                span_id=151,
+                start_ns=request_time * 1_000_000,
+                end_ns=(request_time + 1_000) * 1_000_000,
+            )
+        ],
+    )
+
+    with TempDir() as tmp:
+        from opentelemetry.proto.trace.v1.trace_pb2 import TracesData
+
+        from mlflow.tracing.otel.otel_archival import TRACE_ARCHIVAL_FILENAME
+
+        archive_root = Path(tmp.path("archive"))
+        archive_root.mkdir()
+        archived = _archive_traces(
+            store,
+            default_trace_archival_location=archive_root.as_uri(),
+            default_retention="1d",
+            now_millis=now_millis,
+        )
+
+        assert archived == 1
+        archived_trace_info = store.get_trace_info(trace_id)
+        archive_payload_path = (
+            Path(local_file_uri_to_path(archived_trace_info.tags[TraceTagKey.ARCHIVE_LOCATION]))
+            / TRACE_ARCHIVAL_FILENAME
+        )
+        assert archive_payload_path.is_file()
+
+        traces_data = TracesData()
+        traces_data.resource_spans.add().scope_spans.add()
+        archive_payload_path.write_bytes(traces_data.SerializeToString())
+
+        with pytest.raises(MlflowTraceDataCorrupted, match="Trace data is corrupted"):
+            store.get_trace(trace_id)
+        with pytest.raises(MlflowTraceDataCorrupted, match="Trace data is corrupted"):
+            store.batch_get_traces([trace_id])
 
 
 def test_archive_traces_preserve_root_first_span_order(store: SqlAlchemyStore):
@@ -14733,6 +14792,16 @@ def test_archive_traces_rejects_proxy_only_default_root(store: SqlAlchemyStore):
             default_retention="1d",
         )
     assert exc_info.value.error_code == ErrorCode.Name(INVALID_PARAMETER_VALUE)
+
+
+def test_archive_traces_rejects_unregistered_archive_scheme_before_processing_candidates(
+    store: SqlAlchemyStore,
+):
+    with pytest.raises(MlflowException, match="Could not find a registered artifact repository"):
+        store.archive_traces(
+            default_trace_archival_location="unknown-scheme://archive/default",
+            default_retention="1d",
+        )
 
 
 def test_archive_traces_raises_when_default_retention_exceeds_max_length(
@@ -15854,7 +15923,10 @@ def test_archive_traces_keeps_new_archive_now_request_added_mid_pass(
     )
 
 
-def test_archive_traces_marks_malformed_traces_and_excludes_retries(store: SqlAlchemyStore):
+@pytest.mark.parametrize("invalid_content", ["not-json", "[]"], ids=["invalid-json", "wrong-shape"])
+def test_archive_traces_marks_malformed_traces_and_excludes_retries(
+    store: SqlAlchemyStore, invalid_content: str
+):
     exp_id = store.create_experiment("archive-malformed-trace")
     trace_id = "tr-malformed"
     now_millis = 50 * 24 * 60 * 60 * 1000
@@ -15870,7 +15942,7 @@ def test_archive_traces_marks_malformed_traces_and_excludes_retries(store: SqlAl
             session
             .query(SqlSpan)
             .filter(SqlSpan.trace_id == trace_id)
-            .update({SqlSpan.content: "not-json"}, synchronize_session=False)
+            .update({SqlSpan.content: invalid_content}, synchronize_session=False)
         )
 
     with TempDir() as tmp:
@@ -15916,7 +15988,7 @@ def test_archive_traces_marks_serializer_failures_as_malformed_and_excludes_retr
         archive_root = Path(tmp.path("archive"))
         archive_root.mkdir()
         with mock.patch(
-            "mlflow.tracing.otel.otel_archival.spans_to_traces_data_pb",
+            "mlflow.store.tracking.sqlalchemy_store.spans_to_traces_data_pb",
             side_effect=MlflowException.invalid_parameter_value("simulated malformed trace"),
         ):
             archived = _archive_traces(
@@ -15945,22 +16017,34 @@ def test_archive_traces_marks_serializer_failures_as_malformed_and_excludes_retr
 def test_archive_traces_marks_unsupported_archive_repository_as_terminal_failure(
     store: SqlAlchemyStore,
 ):
-    exp_id = store.create_experiment("archive-unsupported-repository")
-    trace_id = "tr-unsupported-repository"
+    exp_fail = store.create_experiment("archive-unsupported-repository")
+    exp_success = store.create_experiment("archive-supported-repository")
+    fail_trace_id = "tr-unsupported-repository"
+    success_trace_id = "tr-supported-repository"
     now_millis = 57 * 24 * 60 * 60 * 1000
 
-    _create_trace(store, trace_id, exp_id, request_time=now_millis - 2 * 24 * 60 * 60 * 1000)
-    store.log_spans(exp_id, [create_test_span(trace_id, span_id=571)])
-    store.set_experiment_tag(
-        exp_id, ExperimentTag(TraceExperimentTagKey.ARCHIVE_NOW, json.dumps({}))
+    _create_trace(store, fail_trace_id, exp_fail, request_time=now_millis - 2 * 24 * 60 * 60 * 1000)
+    _create_trace(
+        store, success_trace_id, exp_success, request_time=now_millis - 24 * 60 * 60 * 1000
     )
+    store.log_spans(exp_fail, [create_test_span(fail_trace_id, span_id=571)])
+    store.log_spans(exp_success, [create_test_span(success_trace_id, span_id=572)])
+    for exp_id in (exp_fail, exp_success):
+        store.set_experiment_tag(
+            exp_id, ExperimentTag(TraceExperimentTagKey.ARCHIVE_NOW, json.dumps({}))
+        )
 
     from mlflow.store.artifact.artifact_repo import ArtifactRepository
 
+    original_upload_archived_trace_data_bytes = ArtifactRepository.upload_archived_trace_data_bytes
+
     def upload_bytes_unsupported(self, data):
-        raise MlflowNotImplementedException(
-            "Databricks trace artifact repositories do not yet support ARCHIVE_REPO trace payloads."
-        )
+        if fail_trace_id in self.artifact_uri:
+            raise MlflowNotImplementedException(
+                "Databricks trace artifact repositories do not yet support ARCHIVE_REPO trace "
+                "payloads."
+            )
+        return original_upload_archived_trace_data_bytes(self, data)
 
     with TempDir() as tmp:
         archive_root = Path(tmp.path("archive"))
@@ -15976,21 +16060,17 @@ def test_archive_traces_marks_unsupported_archive_repository_as_terminal_failure
                 default_retention="365d",
                 now_millis=now_millis,
             )
-            archived_again = _archive_traces(
-                store,
-                default_trace_archival_location=archive_root.as_uri(),
-                default_retention="365d",
-                now_millis=now_millis,
-            )
 
-    assert archived == 0
-    assert archived_again == 0
-    trace_info = store.get_trace_info(trace_id)
-    assert trace_info.tags[TraceTagKey.SPANS_LOCATION] == SpansLocation.TRACKING_STORE.value
-    assert trace_info.tags[TraceTagKey.ARCHIVAL_FAILURE] == (
+    assert archived == 1
+    fail_trace_info = store.get_trace_info(fail_trace_id)
+    assert fail_trace_info.tags[TraceTagKey.SPANS_LOCATION] == SpansLocation.TRACKING_STORE.value
+    assert fail_trace_info.tags[TraceTagKey.ARCHIVAL_FAILURE] == (
         TraceArchivalFailureReason.UNSUPPORTED_ARCHIVE_REPOSITORY.value
     )
-    assert TraceExperimentTagKey.ARCHIVE_NOW not in store.get_experiment(exp_id).tags
+    success_trace_info = store.get_trace_info(success_trace_id)
+    assert success_trace_info.tags[TraceTagKey.SPANS_LOCATION] == SpansLocation.ARCHIVE_REPO.value
+    assert TraceExperimentTagKey.ARCHIVE_NOW not in store.get_experiment(exp_fail).tags
+    assert TraceExperimentTagKey.ARCHIVE_NOW not in store.get_experiment(exp_success).tags
 
 
 def test_archive_traces_keeps_archive_now_when_only_unmarked_non_archivable_traces_remain(
@@ -16022,7 +16102,7 @@ def test_archive_traces_keeps_archive_now_when_only_unmarked_non_archivable_trac
     assert TraceExperimentTagKey.ARCHIVE_NOW in store.get_experiment(exp_id).tags
 
 
-def test_archive_traces_leaves_unexpected_deserialization_errors_retryable(
+def test_archive_traces_raises_unexpected_deserialization_errors(
     store: SqlAlchemyStore,
 ):
     exp_id = store.create_experiment("archive-unexpected-deserialize-error")
@@ -16053,6 +16133,116 @@ def test_archive_traces_leaves_unexpected_deserialization_errors_retryable(
             store,
             "_serialize_trace_archival_snapshot_to_pb",
             side_effect=RuntimeError("simulated unexpected serialize failure"),
+        ):
+            with pytest.raises(RuntimeError, match="simulated unexpected serialize failure"):
+                _archive_traces(
+                    store,
+                    default_trace_archival_location=archive_root.as_uri(),
+                    default_retention="365d",
+                    now_millis=now_millis,
+                )
+
+    trace_info = store.get_trace_info(trace_id)
+    assert trace_info.tags[TraceTagKey.SPANS_LOCATION] == SpansLocation.TRACKING_STORE.value
+    assert TraceTagKey.ARCHIVAL_FAILURE not in trace_info.tags
+    assert TraceExperimentTagKey.ARCHIVE_NOW in store.get_experiment(exp_id).tags
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        MlflowException("simulated retryable archival failure"),
+        OSError("simulated storage error"),
+    ],
+    ids=["mlflow-error", "os-error"],
+)
+def test_archive_traces_leaves_retryable_errors_retryable(store: SqlAlchemyStore, error: Exception):
+    exp_id = store.create_experiment("archive-retryable-mlflow-error")
+    trace_id = "tr-retryable-mlflow-error"
+    now_millis = 60 * 24 * 60 * 60 * 1000
+    request_time = now_millis - 2 * 24 * 60 * 60 * 1000
+
+    _create_trace(store, trace_id, exp_id, request_time=request_time)
+    store.log_spans(
+        exp_id,
+        [
+            create_test_span(
+                trace_id,
+                span_id=582,
+                start_ns=request_time * 1_000_000,
+                end_ns=(request_time + 1_000) * 1_000_000,
+            )
+        ],
+    )
+    store.set_experiment_tag(
+        exp_id, ExperimentTag(TraceExperimentTagKey.ARCHIVE_NOW, json.dumps({}))
+    )
+
+    with TempDir() as tmp:
+        from mlflow.store.artifact.artifact_repo import ArtifactRepository
+
+        archive_root = Path(tmp.path("archive"))
+        archive_root.mkdir()
+        with mock.patch.object(
+            ArtifactRepository,
+            "upload_archived_trace_data_bytes",
+            side_effect=error,
+        ):
+            archived = _archive_traces(
+                store,
+                default_trace_archival_location=archive_root.as_uri(),
+                default_retention="365d",
+                now_millis=now_millis,
+            )
+
+        assert archived == 0
+        assert TraceExperimentTagKey.ARCHIVE_NOW in store.get_experiment(exp_id).tags
+
+        archived_again = _archive_traces(
+            store,
+            default_trace_archival_location=archive_root.as_uri(),
+            default_retention="365d",
+            now_millis=now_millis,
+        )
+
+    assert archived_again == 1
+    trace_info = store.get_trace_info(trace_id)
+    assert trace_info.tags[TraceTagKey.SPANS_LOCATION] == SpansLocation.ARCHIVE_REPO.value
+    assert TraceTagKey.ARCHIVAL_FAILURE not in trace_info.tags
+    assert TraceExperimentTagKey.ARCHIVE_NOW not in store.get_experiment(exp_id).tags
+
+
+def test_archive_traces_leaves_sqlalchemy_errors_retryable(
+    store: SqlAlchemyStore,
+):
+    exp_id = store.create_experiment("archive-retryable-sqlalchemy-error")
+    trace_id = "tr-retryable-sqlalchemy-error"
+    now_millis = 61 * 24 * 60 * 60 * 1000
+    request_time = now_millis - 2 * 24 * 60 * 60 * 1000
+
+    _create_trace(store, trace_id, exp_id, request_time=request_time)
+    store.log_spans(
+        exp_id,
+        [
+            create_test_span(
+                trace_id,
+                span_id=583,
+                start_ns=request_time * 1_000_000,
+                end_ns=(request_time + 1_000) * 1_000_000,
+            )
+        ],
+    )
+    store.set_experiment_tag(
+        exp_id, ExperimentTag(TraceExperimentTagKey.ARCHIVE_NOW, json.dumps({}))
+    )
+
+    with TempDir() as tmp:
+        archive_root = Path(tmp.path("archive"))
+        archive_root.mkdir()
+        with mock.patch.object(
+            store,
+            "_load_trace_archival_snapshot",
+            side_effect=SQLAlchemyError("simulated retryable db failure"),
         ):
             archived = _archive_traces(
                 store,

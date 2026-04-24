@@ -22,7 +22,7 @@ import sqlalchemy
 import sqlalchemy.orm
 import sqlalchemy.sql.expression as sql
 from sqlalchemy import and_, case, distinct, exists, func, or_, select, sql
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Query, Session, aliased, joinedload, selectinload
 from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.sql.selectable import Select, Subquery
@@ -85,6 +85,7 @@ from mlflow.entities.trace_status import TraceStatus
 from mlflow.exceptions import (
     MlflowException,
     MlflowNotImplementedException,
+    MlflowTraceArchivalMalformedTrace,
     MlflowTracingException,
 )
 from mlflow.genai.judges.instructions_judge import (
@@ -183,7 +184,7 @@ from mlflow.tracing.constant import (
     TraceSizeStatsKey,
     TraceTagKey,
 )
-from mlflow.tracing.otel.otel_archival import TRACE_ARCHIVAL_FILENAME
+from mlflow.tracing.otel.otel_archival import TRACE_ARCHIVAL_FILENAME, spans_to_traces_data_pb
 from mlflow.tracing.otel.translation import (
     translate_loaded_span,
     translate_span_when_storing,
@@ -5164,25 +5165,11 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
             traces = []
             for sql_trace_info in sql_trace_infos:
                 trace_info = sql_trace_info.to_mlflow_entity()
-                # Preserve batch semantics: skip traces whose span payloads cannot be
-                # reconstructed instead of failing the entire batch.  Catch the
-                # broader MlflowTracingException so that archive-repo download
-                # failures and non-DB span locations are handled the same way as
-                # corrupt or missing trace data.
-                try:
-                    spans = self._get_spans_with_trace_info(
-                        trace_info, sql_trace_info.spans, allow_partial=False
-                    )
-                except MlflowTracingException as e:
-                    _logger.warning(
-                        "Skipping trace %s during batch_get_traces because its span data could "
-                        "not be loaded (%s).",
-                        trace_info.trace_id,
-                        getattr(e, "ctx", "unknown"),
-                        exc_info=_logger.isEnabledFor(logging.DEBUG),
-                    )
-                    continue
-                if spans:
+                # batch_get_traces is depended by search_traces, so we need to return
+                # complete traces only
+                if spans := self._get_spans_with_trace_info(
+                    trace_info, sql_trace_info.spans, allow_partial=False
+                ):
                     traces.append(Trace(info=trace_info, data=TraceData(spans=spans)))
 
             return traces
@@ -5260,6 +5247,7 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
                 "Trace archival config resolution returned no archival retention.",
                 error_code=INTERNAL_ERROR,
             )
+        self._validate_trace_archival_destination(trace_archival_config=trace_archival_config)
         broader_retention_millis = _parse_trace_archival_duration_millis(
             trace_archival_config.config.retention
         )
@@ -5387,7 +5375,9 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
                         trace_archival_config=trace_archival_config,
                     ):
                         archived_count += 1
-                except Exception:
+                except MlflowNotImplementedException:
+                    raise
+                except (MlflowException, SQLAlchemyError):
                     _logger.warning(
                         "Failed to archive trace %s; leaving it eligible for retry.",
                         candidate.trace_id,
@@ -5410,6 +5400,30 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
         patching the shared time utility.
         """
         return get_current_time_millis()
+
+    def _validate_trace_archival_destination(
+        self, *, trace_archival_config: ResolvedTraceArchivalConfig
+    ) -> None:
+        resolved_root = _validate_trace_archival_location(
+            trace_archival_config.config.location,
+            parameter_name="resolved_trace_archival_location",
+        )
+        if trace_archival_config.append_workspace_prefix and (
+            workspace_name := self._get_trace_archival_workspace_name()
+        ):
+            resolved_root = append_to_uri_path(resolved_root, WORKSPACES_DIR_NAME, workspace_name)
+
+        # Fail deterministic repository/config problems once per pass instead of misclassifying
+        # them as retryable per-trace archival errors.
+        get_artifact_repository(
+            append_to_uri_path(
+                resolved_root,
+                "0",
+                self.TRACE_FOLDER_NAME,
+                "preflight",
+                self.ARTIFACTS_FOLDER_NAME,
+            )
+        )
 
     def _get_trace_archival_workspace_name(self) -> str | None:
         """Return the workspace path segment for workspace-scoped archival roots."""
@@ -5485,22 +5499,19 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
         *,
         limit: int | None,
     ) -> list[_TraceArchiveCandidate]:
+        def sort_key(candidate: _TraceArchiveCandidate) -> tuple[int, str]:
+            return candidate.timestamp_ms, candidate.trace_id
+
         if limit is None:
-            return sorted(
-                [*existing_candidates, *new_candidates],
-                key=lambda candidate: (candidate.timestamp_ms, candidate.trace_id),
-            )
+            return sorted([*existing_candidates, *new_candidates], key=sort_key)
         if limit <= 0:
             return []
         if not existing_candidates:
-            return new_candidates[:limit]
+            return sorted(new_candidates, key=sort_key)[:limit]
         if not new_candidates:
-            return existing_candidates[:limit]
+            return sorted(existing_candidates, key=sort_key)[:limit]
 
-        return sorted(
-            [*existing_candidates, *new_candidates],
-            key=lambda candidate: (candidate.timestamp_ms, candidate.trace_id),
-        )[:limit]
+        return sorted([*existing_candidates, *new_candidates], key=sort_key)[:limit]
 
     @staticmethod
     def _dedupe_trace_archive_candidates(
@@ -5607,8 +5618,6 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
         trace_id: str,
         trace_archival_config: ResolvedTraceArchivalConfig,
     ) -> bool:
-        from mlflow.exceptions import MlflowTraceArchivalMalformedTrace
-
         snapshot = self._load_trace_archival_snapshot(trace_id)
         if snapshot is None:
             return False
@@ -5642,19 +5651,27 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
                 failure_reason=TraceArchivalFailureReason.UNSUPPORTED_ARCHIVE_REPOSITORY.value,
             )
             return False
+        except Exception as e:
+            # Normalize backend-specific upload errors so the outer archival loop
+            # can treat them as retryable without depending on repository internals.
+            raise MlflowException("Trace archival upload failed.") from e
         try:
             finalized = self._finalize_archived_trace(
                 trace_id=trace_id,
                 snapshot_rows=snapshot_rows,
                 artifact_uri=artifact_uri,
             )
-        except Exception:
+        except Exception as e:
             self._delete_unreferenced_archived_trace_payload(
                 trace_id=trace_id,
                 artifact_uri=artifact_uri,
                 artifact_repo=artifact_repo,
             )
-            raise
+            if isinstance(e, MlflowException):
+                raise
+            # Normalize unexpected finalize-time errors after cleanup so the
+            # outer archival loop can retry them consistently.
+            raise MlflowException("Trace archival finalization failed.") from e
 
         if not finalized:
             self._delete_unreferenced_archived_trace_payload(
@@ -5688,16 +5705,13 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
     def _serialize_trace_archival_snapshot_to_pb(
         self, snapshot_rows: list[tuple[str, str]]
     ) -> bytes:
-        from mlflow.exceptions import MlflowTraceArchivalMalformedTrace
-        from mlflow.tracing.otel.otel_archival import spans_to_traces_data_pb
-
         try:
             spans = [
                 Span.from_dict(translate_loaded_span(json.loads(content)))
                 for _, content in snapshot_rows
             ]
             return spans_to_traces_data_pb(spans)
-        except (MlflowException, TypeError, ValueError) as e:
+        except (MlflowException, TypeError, ValueError, AttributeError) as e:
             raise MlflowTraceArchivalMalformedTrace(str(e)) from e
 
     def _is_trace_actionable_for_archival(
