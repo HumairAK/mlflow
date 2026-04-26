@@ -155,6 +155,14 @@ class WorkspaceAwareSqlAlchemyStore(WorkspaceAwareMixin, SqlAlchemyStore):
             )
 
     def _trace_query(self, session, for_update_or_delete=False):
+        """
+        Return a workspace-scoped trace query.
+
+        Plain reads can delegate to the normal workspace-aware `_get_query()` path, which joins
+        through experiments to enforce workspace boundaries. Locking reads use a trace-only query
+        filtered by workspace experiment IDs instead so the row lock applies directly to
+        `trace_info` rows without depending on the joined read shape.
+        """
         if for_update_or_delete:
             workspace = self._get_active_workspace()
             workspace_experiment_ids = (
@@ -163,10 +171,30 @@ class WorkspaceAwareSqlAlchemyStore(WorkspaceAwareMixin, SqlAlchemyStore):
                 .filter(SqlExperiment.workspace == workspace)
                 .subquery()
             )
-            return SqlAlchemyStore._get_query(self, session, SqlTraceInfo).filter(
+            query = SqlAlchemyStore._get_query(self, session, SqlTraceInfo).filter(
                 SqlTraceInfo.experiment_id.in_(select(workspace_experiment_ids.c.experiment_id))
             )
+            return self._apply_trace_row_lock(query)
         return super()._trace_query(session, for_update_or_delete=False)
+
+    def _trace_mutation_query(self, session):
+        """
+        Return a workspace-scoped trace query suitable for bulk UPDATE/DELETE.
+
+        Mutation queries avoid the join-based read shape from `_get_query()` and instead target
+        `trace_info` directly, scoping rows by experiment IDs that belong to the active
+        workspace.
+        """
+        workspace = self._get_active_workspace()
+        workspace_experiment_ids = (
+            session
+            .query(SqlExperiment.experiment_id)
+            .filter(SqlExperiment.workspace == workspace)
+            .subquery()
+        )
+        return SqlAlchemyStore._get_query(self, session, SqlTraceInfo).filter(
+            SqlTraceInfo.experiment_id.in_(select(workspace_experiment_ids.c.experiment_id))
+        )
 
     def _experiment_where_clauses(self):
         return [SqlExperiment.workspace == self._get_active_workspace()]

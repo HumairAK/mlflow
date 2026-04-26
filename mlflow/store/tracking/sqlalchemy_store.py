@@ -14,7 +14,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from functools import reduce
 from pathlib import PurePath
-from typing import Any, TypedDict, TypeVar
+from typing import Any, Iterable, TypedDict, TypeVar
 from urllib.parse import urlparse
 
 import sqlalchemy
@@ -876,7 +876,22 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
         return runs[0]
 
     def _trace_query(self, session, for_update_or_delete=False):
+        query = self._get_query(session, SqlTraceInfo)
+        if for_update_or_delete:
+            return self._apply_trace_row_lock(query)
+        return query
+
+    def _trace_mutation_query(self, session):
         return self._get_query(session, SqlTraceInfo)
+
+    def _apply_trace_row_lock(self, query):
+        if self.db_type == MSSQL:
+            return query.with_hint(
+                SqlTraceInfo,
+                "WITH (UPDLOCK, ROWLOCK)",
+                dialect_name="mssql",
+            )
+        return query.with_for_update()
 
     def _dataset_query(self, session):
         return self._get_query(session, SqlEvaluationDataset)
@@ -3352,65 +3367,49 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
                 session.flush()
             except IntegrityError:
                 # Trace already exists (likely created by log_spans() racing with
-                # start_trace()). Rollback the failed INSERT and use merge (upsert)
-                # to update the trace with the complete data from start_trace().
+                # start_trace()). Roll back the failed INSERT and update the
+                # persistent row in place so we never write back a stale trace_version.
                 session.rollback()
-
-                # Re-create sql_trace_info without metadata/metrics relationships
-                # to avoid cascade INSERT conflicts during merge.
-                sql_trace_info = SqlTraceInfo(
-                    request_id=trace_id,
-                    experiment_id=trace_info.experiment_id,
-                    timestamp_ms=trace_info.request_time,
-                    execution_time_ms=trace_info.execution_duration,
-                    status=trace_info.state.value,
-                    client_request_id=trace_info.client_request_id,
-                    request_preview=sql_trace_info.request_preview,
-                    response_preview=sql_trace_info.response_preview,
-                )
-                sql_trace_info.tags = tags
-                sql_trace_info.assessments = sql_assessments
-
-                # Preserve the spans_location tag if it was set by log_spans
                 db_sql_trace_info = (
                     self
                     ._trace_query(session)
                     .filter(SqlTraceInfo.request_id == trace_id)
                     .one_or_none()
                 )
-                new_tag_keys = {t.key for t in tags}
-                if db_sql_trace_info:
-                    # Duplicate start_trace() calls must keep any store-managed tags already
-                    # attached to the trace, including archival state written after log_spans().
-                    for tag in db_sql_trace_info.tags:
-                        if tag.key not in new_tag_keys:
-                            sql_trace_info.tags.append(
-                                SqlTraceTag(request_id=trace_id, key=tag.key, value=tag.value)
-                            )
+                if db_sql_trace_info is None:
+                    raise
+                spans_location = next(
+                    (
+                        tag.value
+                        for tag in db_sql_trace_info.tags
+                        if tag.key == TraceTagKey.SPANS_LOCATION
+                    ),
+                    None,
+                )
+                if spans_location not in (None, SpansLocation.TRACKING_STORE.value):
+                    raise MlflowException(
+                        f"Cannot update traces that are no longer DB-backed: '{trace_id}'.",
+                        error_code=INVALID_STATE,
+                    )
 
-                    new_metric_keys = {m.key for m in sql_trace_info.metrics}
-                    for metric in db_sql_trace_info.metrics:
-                        if metric.key not in new_metric_keys:
-                            sql_trace_info.metrics.append(
-                                SqlTraceMetrics(
-                                    request_id=trace_id, key=metric.key, value=metric.value
-                                )
-                            )
+                # Advance the version before staging ORM writes so a concurrent archival
+                # finalization cannot be hidden by autoflush re-publishing TRACKING_STORE.
+                self._advance_trace_versions_for_db_span_writes(session, [trace_id])
 
-                    # Preserve request/response previews computed by log_spans()
-                    if (
-                        sql_trace_info.request_preview is None
-                        and db_sql_trace_info.request_preview is not None
-                    ):
-                        sql_trace_info.request_preview = db_sql_trace_info.request_preview
-                    if (
-                        sql_trace_info.response_preview is None
-                        and db_sql_trace_info.response_preview is not None
-                    ):
-                        sql_trace_info.response_preview = db_sql_trace_info.response_preview
+                db_sql_trace_info.experiment_id = trace_info.experiment_id
+                db_sql_trace_info.timestamp_ms = trace_info.request_time
+                db_sql_trace_info.execution_time_ms = trace_info.execution_duration
+                db_sql_trace_info.status = trace_info.state.value
+                db_sql_trace_info.client_request_id = trace_info.client_request_id
+                if trace_info.request_preview is not None:
+                    db_sql_trace_info.request_preview = trace_info.request_preview
+                if trace_info.response_preview is not None:
+                    db_sql_trace_info.response_preview = trace_info.response_preview
 
-                session.merge(sql_trace_info)
-                session.flush()
+                for tag in tags:
+                    session.merge(tag)
+                for assessment in sql_assessments:
+                    session.merge(assessment)
 
                 # Upsert metadata and metrics individually so the complete data
                 # from start_trace() overwrites any partial values from log_spans().
@@ -3418,6 +3417,8 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
                     session.merge(SqlTraceMetadata(request_id=trace_id, key=k, value=v))
                 for k, v in trace_metrics.items():
                     session.merge(SqlTraceMetrics(request_id=trace_id, key=k, value=v))
+                session.flush()
+                sql_trace_info = self._get_sql_trace_info(session, trace_id)
 
             return sql_trace_info.to_mlflow_entity()
 
@@ -4656,27 +4657,6 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
                 .all()
             }
 
-            if existing_traces:
-                archived_trace_ids = sorted(
-                    request_id
-                    for (request_id,) in session
-                    .query(SqlTraceTag.request_id)
-                    .filter(
-                        SqlTraceTag.request_id.in_(list(existing_traces)),
-                        SqlTraceTag.key == TraceTagKey.SPANS_LOCATION,
-                        SqlTraceTag.value == SpansLocation.ARCHIVE_REPO.value,
-                    )
-                    .all()
-                )
-                if archived_trace_ids:
-                    archived_trace_list = ", ".join(
-                        f"'{trace_id}'" for trace_id in archived_trace_ids
-                    )
-                    raise MlflowException(
-                        f"Cannot log spans to archived traces: {archived_trace_list}.",
-                        error_code=INVALID_STATE,
-                    )
-
             # --- Phase 2: Create missing traces ---
             # On IntegrityError (concurrent start_trace race), roll back and retry so that
             # previously flushed trace_infos (which session.rollback() would undo) are
@@ -4739,6 +4719,9 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
                 all_metric_rows = [
                     r for r in all_metric_rows if r["trace_id"] not in missing_trace_ids
                 ]
+
+            # Keep downstream per-trace updates aligned with the surviving span/metric rows.
+            all_trace_ids = [trace_id for trace_id in all_trace_ids if trace_id in existing_traces]
 
             # Fill in experiment_id on span rows now that we have trace infos
             for row in all_span_rows:
@@ -4927,16 +4910,23 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
                         )
 
                 if update_dict:
-                    self._trace_query(session, for_update_or_delete=True).filter(
-                        SqlTraceInfo.request_id == trace_id
-                    ).update(
-                        update_dict,
-                        # Skip session synchronization for performance — we don't
-                        # use the ORM object afterward.
-                        synchronize_session=False,
+                    (
+                        self
+                        ._trace_mutation_query(session)
+                        .filter(SqlTraceInfo.request_id == trace_id)
+                        .update(
+                            update_dict,
+                            # Skip session synchronization for performance — we don't
+                            # use the ORM object afterward.
+                            synchronize_session=False,
+                        )
                     )
-                # Mark that spans are stored in the tracking store DB (required for
-                # concurrent calls that create or update the trace info).
+            self._advance_trace_versions_for_db_span_writes(session, all_trace_ids)
+
+            # Re-publish TRACKING_STORE only after the conditional trace_version bump succeeds so
+            # span writes, including span-only changes that did not update trace_info, commit
+            # atomically with the new DB-backed trace version.
+            for trace_id in all_trace_ids:
                 session.merge(
                     SqlTraceTag(
                         request_id=trace_id,
@@ -5139,6 +5129,112 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
 
             return [sql_trace_info.to_mlflow_entity() for sql_trace_info in sql_trace_infos]
 
+    def _get_trace_ids_outside_tracking_store(
+        self, session: Session, trace_ids: Iterable[str]
+    ) -> dict[str, str]:
+        trace_ids = list(dict.fromkeys(trace_ids))
+        if not trace_ids:
+            return {}
+
+        blocked_rows = (
+            session
+            .query(SqlTraceTag.request_id, SqlTraceTag.value)
+            .filter(
+                SqlTraceTag.request_id.in_(trace_ids),
+                SqlTraceTag.key == TraceTagKey.SPANS_LOCATION,
+                SqlTraceTag.value != SpansLocation.TRACKING_STORE.value,
+            )
+            .all()
+        )
+        return dict(blocked_rows)
+
+    def _raise_log_spans_non_db_backed_error(self, blocked_trace_ids: dict[str, str]) -> None:
+        archived_trace_ids = sorted(
+            trace_id
+            for trace_id, spans_location in blocked_trace_ids.items()
+            if spans_location == SpansLocation.ARCHIVE_REPO.value
+        )
+        other_non_db_backed_trace_ids = sorted(
+            trace_id
+            for trace_id, spans_location in blocked_trace_ids.items()
+            if spans_location != SpansLocation.ARCHIVE_REPO.value
+        )
+
+        if archived_trace_ids and not other_non_db_backed_trace_ids:
+            archived_trace_list = ", ".join(f"'{trace_id}'" for trace_id in archived_trace_ids)
+            raise MlflowException(
+                f"Cannot log spans to archived traces: {archived_trace_list}.",
+                error_code=INVALID_STATE,
+            )
+
+        if other_non_db_backed_trace_ids and not archived_trace_ids:
+            non_db_backed_trace_list = ", ".join(
+                f"'{trace_id}'" for trace_id in other_non_db_backed_trace_ids
+            )
+            raise MlflowException(
+                "Cannot log spans to traces that are no longer DB-backed: "
+                f"{non_db_backed_trace_list}.",
+                error_code=INVALID_STATE,
+            )
+
+        if archived_trace_ids and other_non_db_backed_trace_ids:
+            archived_trace_list = ", ".join(f"'{trace_id}'" for trace_id in archived_trace_ids)
+            non_db_backed_trace_list = ", ".join(
+                f"'{trace_id}'" for trace_id in other_non_db_backed_trace_ids
+            )
+            raise MlflowException(
+                "Cannot log spans to traces that are no longer DB-backed: "
+                f"archived={archived_trace_list}; other={non_db_backed_trace_list}.",
+                error_code=INVALID_STATE,
+            )
+
+        raise MlflowException(
+            "Cannot log spans because one or more traces are no longer DB-backed.",
+            error_code=INVALID_STATE,
+        )
+
+    def _advance_trace_versions_for_db_span_writes(
+        self, session: Session, trace_ids: Iterable[str]
+    ) -> None:
+        """
+        Atomically advance the DB-backed trace version for each touched trace.
+
+        The version bump is the writer-side guard against archival finalization: if a trace is
+        no longer DB-backed at commit time, the conditional UPDATE affects fewer rows than
+        expected and the whole write transaction must roll back.
+        """
+        trace_ids = list(dict.fromkeys(trace_ids))
+        if not trace_ids:
+            return
+
+        spans_outside_tracking_store = exists().where(
+            and_(
+                SqlTraceTag.request_id == SqlTraceInfo.request_id,
+                SqlTraceTag.key == TraceTagKey.SPANS_LOCATION,
+                SqlTraceTag.value != SpansLocation.TRACKING_STORE.value,
+            )
+        )
+        updated_rows = (
+            self
+            ._trace_mutation_query(session)
+            .filter(
+                SqlTraceInfo.request_id.in_(trace_ids),
+                ~spans_outside_tracking_store,
+            )
+            .update(
+                {SqlTraceInfo.trace_version: SqlTraceInfo.trace_version + 1},
+                synchronize_session=False,
+            )
+        )
+        if updated_rows == len(trace_ids):
+            return
+
+        # We intentionally pay for this reread only on the failure path because
+        # archival races are rare, and we still need this post-UPDATE check to
+        # distinguish archived traces from other non-DB-backed states.
+        blocked_trace_ids = self._get_trace_ids_outside_tracking_store(session, trace_ids)
+        self._raise_log_spans_non_db_backed_error(blocked_trace_ids)
+
     def archive_traces(
         self,
         *,
@@ -5310,7 +5406,19 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
                     ):
                         archived_count += 1
                 except MlflowNotImplementedException:
-                    raise
+                    # TODO: The orchestration follow-up should treat unsupported archival
+                    # destinations as a scope-level signal (for example per workspace /
+                    # resolved archival location) and isolate the rest of that scope for the
+                    # current pass. Keep this retryable for now so traces remain eligible once
+                    # the workspace configuration is fixed.
+                    _logger.warning(
+                        "Failed to archive trace %s because the archive destination is "
+                        "unsupported; leaving it eligible for retry.",
+                        candidate.trace_id,
+                        exc_info=True,
+                    )
+                    if candidate.experiment_id in archive_now_experiment_ids:
+                        retryable_failure_experiment_ids.add(candidate.experiment_id)
                 except (MlflowException, SQLAlchemyError):
                     _logger.warning(
                         "Failed to archive trace %s; leaving it eligible for retry.",
@@ -5553,18 +5661,19 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
         trace_id: str,
         trace_archival_config: ResolvedTraceArchivalConfig,
     ) -> bool:
-        snapshot = self._load_trace_archival_snapshot(trace_id)
-        if snapshot is None:
+        archival_data = self._load_trace_archival_data(trace_id)
+        if archival_data is None:
             return False
+        trace_info, trace_version, span_rows = archival_data
 
-        trace_info, snapshot_rows = snapshot
         try:
-            archived_pb = self._serialize_trace_archival_snapshot_to_pb(snapshot_rows)
+            archived_pb = self._serialize_trace_archival_span_rows_to_pb(span_rows)
         except MlflowTraceArchivalMalformedTrace:
             _logger.warning("Marking trace %s as MALFORMED_TRACE during archival.", trace_id)
             self._mark_trace_archival_failure(
                 trace_id=trace_id,
                 failure_reason=TraceArchivalFailureReason.MALFORMED_TRACE.value,
+                trace_version=trace_version,
             )
             return False
 
@@ -5578,23 +5687,24 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
             artifact_repo.upload_archived_trace_data_bytes(archived_pb)
         except MlflowNotImplementedException:
             _logger.warning(
-                "Marking trace %s as UNSUPPORTED_ARCHIVE_REPOSITORY during archival.",
+                "Archive repository upload is unsupported for trace %s; leaving it retryable.",
                 trace_id,
             )
-            self._mark_trace_archival_failure(
-                trace_id=trace_id,
-                failure_reason=TraceArchivalFailureReason.UNSUPPORTED_ARCHIVE_REPOSITORY.value,
-            )
-            return False
+            raise
         except Exception as e:
+            self._delete_unreferenced_archived_trace_payload(
+                trace_id=trace_id,
+                artifact_uri=artifact_uri,
+                artifact_repo=artifact_repo,
+            )
             # Normalize backend-specific upload errors so the outer archival loop
             # can treat them as retryable without depending on repository internals.
             raise MlflowException("Trace archival upload failed.") from e
         try:
             finalized = self._finalize_archived_trace(
                 trace_id=trace_id,
-                snapshot_rows=snapshot_rows,
                 artifact_uri=artifact_uri,
+                trace_version=trace_version,
             )
         except Exception as e:
             self._delete_unreferenced_archived_trace_payload(
@@ -5616,9 +5726,9 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
             )
         return finalized
 
-    def _load_trace_archival_snapshot(
+    def _load_trace_archival_data(
         self, trace_id: str
-    ) -> tuple[TraceInfo, list[tuple[str, str]]] | None:
+    ) -> tuple[TraceInfo, int, list[tuple[str, str]]] | None:
         with self.ManagedSessionMaker() as session:
             sql_trace_info = (
                 self
@@ -5634,16 +5744,14 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
             if not self._is_trace_actionable_for_archival(trace_info, sql_trace_info.spans):
                 return None
 
-            snapshot_rows = sorted((span.span_id, span.content) for span in sql_trace_info.spans)
-            return trace_info, snapshot_rows
+            span_rows = sorted((span.span_id, span.content) for span in sql_trace_info.spans)
+            return trace_info, sql_trace_info.trace_version, span_rows
 
-    def _serialize_trace_archival_snapshot_to_pb(
-        self, snapshot_rows: list[tuple[str, str]]
-    ) -> bytes:
+    def _serialize_trace_archival_span_rows_to_pb(self, span_rows: list[tuple[str, str]]) -> bytes:
         try:
             spans = [
                 Span.from_dict(translate_loaded_span(json.loads(content)))
-                for _, content in snapshot_rows
+                for _, content in span_rows
             ]
             return spans_to_traces_data_pb(spans)
         except (MlflowException, TypeError, ValueError, AttributeError) as e:
@@ -5660,6 +5768,26 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
         if trace_info.state == TraceState.IN_PROGRESS:
             return False
         return any(span.content != "" for span in spans)
+
+    def _is_trace_metadata_actionable_for_archival(self, sql_trace_info: SqlTraceInfo) -> bool:
+        spans_location = next(
+            (tag.value for tag in sql_trace_info.tags if tag.key == TraceTagKey.SPANS_LOCATION),
+            None,
+        )
+        if spans_location not in (None, SpansLocation.TRACKING_STORE.value):
+            return False
+        if any(tag.key == TraceTagKey.ARCHIVAL_FAILURE for tag in sql_trace_info.tags):
+            return False
+        return sql_trace_info.status != TraceState.IN_PROGRESS.value
+
+    def _trace_has_non_empty_span_content(self, session: Session, trace_id: str) -> bool:
+        non_empty_span_exists = exists().where(
+            and_(
+                SqlSpan.trace_id == trace_id,
+                SqlSpan.content != "",
+            )
+        )
+        return bool(session.query(non_empty_span_exists).scalar())
 
     def _get_archival_repository_artifact_uri(
         self,
@@ -5725,37 +5853,28 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
         self,
         *,
         trace_id: str,
-        snapshot_rows: list[tuple[str, str]],
         artifact_uri: str,
+        trace_version: int,
     ) -> bool:
         with self.ManagedSessionMaker() as session:
             sql_trace_info = (
                 self
                 ._trace_query(session, for_update_or_delete=True)
-                .options(joinedload(SqlTraceInfo.tags), joinedload(SqlTraceInfo.spans))
+                .options(selectinload(SqlTraceInfo.tags))
                 .filter(SqlTraceInfo.request_id == trace_id)
                 .one_or_none()
             )
             if sql_trace_info is None:
                 return False
 
-            trace_info = sql_trace_info.to_mlflow_entity()
-            if not self._is_trace_actionable_for_archival(trace_info, sql_trace_info.spans):
+            if sql_trace_info.trace_version != trace_version:
                 return False
-
-            # Do a snapshot comparison as defense in depth for non-cooperating writers
-            # or backend-specific lock gaps.
-            current_snapshot_rows = sorted(
-                (span.span_id, span.content) for span in sql_trace_info.spans
-            )
-            if current_snapshot_rows != snapshot_rows:
-                _logger.info(
-                    (
-                        "Skipping archival finalization for trace %s because its DB-backed spans "
-                        "changed."
-                    ),
-                    trace_id,
-                )
+            if not self._is_trace_metadata_actionable_for_archival(sql_trace_info):
+                return False
+            # The trace_version check is the primary race guard; this cheap EXISTS probe is
+            # defense in depth that confirms DB-backed span content still exists without
+            # triggering a second full load of potentially large span payloads.
+            if not self._trace_has_non_empty_span_content(session, trace_id):
                 return False
 
             (
@@ -5789,12 +5908,16 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
             )
             return True
 
-    def _mark_trace_archival_failure(self, *, trace_id: str, failure_reason: str) -> None:
+    def _mark_trace_archival_failure(
+        self, *, trace_id: str, failure_reason: str, trace_version: int | None = None
+    ) -> None:
         with self.ManagedSessionMaker() as session:
             sql_trace_info = (
                 self
                 ._trace_query(session, for_update_or_delete=True)
-                .options(joinedload(SqlTraceInfo.tags))
+                # Keep tags out of the locking SELECT: PostgreSQL rejects FOR UPDATE on
+                # LEFT OUTER JOIN-loaded collections from the nullable side of the join.
+                .options(selectinload(SqlTraceInfo.tags))
                 .filter(SqlTraceInfo.request_id == trace_id)
                 .one_or_none()
             )
@@ -5806,6 +5929,8 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
                 None,
             )
             if spans_location not in (None, SpansLocation.TRACKING_STORE.value):
+                return
+            if trace_version is not None and sql_trace_info.trace_version != trace_version:
                 return
 
             session.merge(
