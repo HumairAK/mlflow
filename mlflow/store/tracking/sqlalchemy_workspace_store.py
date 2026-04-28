@@ -158,11 +158,13 @@ class WorkspaceAwareSqlAlchemyStore(WorkspaceAwareMixin, SqlAlchemyStore):
         """
         Return a workspace-scoped trace query.
 
-        Plain reads can delegate to the normal workspace-aware `_get_query()` path, which joins
-        through experiments to enforce workspace boundaries. Locking reads use a trace-only query
-        filtered by workspace experiment IDs instead so the row lock applies directly to
-        `trace_info` rows without depending on the joined read shape. Callers may pass an explicit
-        workspace snapshot when a multi-step write needs stable scoping across several queries.
+        Both plain reads and locking reads target `trace_info` directly via
+        `SqlAlchemyStore._get_query(..., SqlTraceInfo)` and scope results with an
+        `experiment_id IN (...)` subquery over experiments in the selected workspace. This keeps
+        the query shape anchored on trace rows rather than relying on a workspace-aware join
+        through experiments, which is especially important when applying row locks so the lock
+        lands directly on `trace_info` rows. Callers may pass an explicit workspace snapshot when
+        a multi-step write needs stable scoping across several queries.
         """
         workspace = workspace or self._get_active_workspace()
         workspace_experiment_ids = (

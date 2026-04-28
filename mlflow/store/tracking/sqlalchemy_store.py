@@ -5805,13 +5805,17 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
         return sql_trace_info.status != TraceState.IN_PROGRESS.value
 
     def _trace_has_non_empty_span_content(self, session: Session, trace_id: str) -> bool:
-        non_empty_span_exists = exists().where(
-            and_(
+        # Use .first() instead of a top-level EXISTS query for MSSQL compatibility.
+        return (
+            session
+            .query(SqlSpan.span_id)
+            .filter(
                 SqlSpan.trace_id == trace_id,
                 SqlSpan.content != "",
             )
+            .first()
+            is not None
         )
-        return bool(session.query(non_empty_span_exists).scalar())
 
     def _get_archival_repository_artifact_uri(
         self,
