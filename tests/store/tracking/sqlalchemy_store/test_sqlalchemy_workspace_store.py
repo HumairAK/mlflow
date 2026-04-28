@@ -837,8 +837,14 @@ def test_log_spans_update_is_workspace_scoped(workspace_tracking_store):
             workspace_tracking_store.log_spans(exp_id, [earlier_span])
 
         updated_trace = workspace_tracking_store.get_trace(trace_id)
-        assert updated_trace.info.request_time == original_trace.info.request_time
-        assert updated_trace.info.execution_duration == original_trace.info.execution_duration
+        assert call_state["count"] == 1
+        assert updated_trace.info.request_time == earlier_span.start_time_ns // 1_000_000
+        assert (
+            updated_trace.info.execution_duration
+            == (earlier_span.end_time_ns - earlier_span.start_time_ns) // 1_000_000
+        )
+        assert updated_trace.info.request_time < original_trace.info.request_time
+        assert updated_trace.info.execution_duration > original_trace.info.execution_duration
         assert len(updated_trace.data.spans) == 2
 
 

@@ -875,13 +875,13 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
 
         return runs[0]
 
-    def _trace_query(self, session, for_update_or_delete=False):
+    def _trace_query(self, session, for_update_or_delete=False, workspace=None):
         query = self._get_query(session, SqlTraceInfo)
         if for_update_or_delete:
             return self._apply_trace_row_lock(query)
         return query
 
-    def _trace_mutation_query(self, session):
+    def _trace_mutation_query(self, session, workspace=None):
         return self._get_query(session, SqlTraceInfo)
 
     def _apply_trace_row_lock(self, query):
@@ -4656,12 +4656,18 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
                 root_span_dict=root_span_dict,
             )
 
+        # Resolve the workspace once so every trace read/update in this log_spans() call uses the
+        # same scope, even if the ambient workspace context changes before the transaction commits.
+        trace_write_workspace = (
+            self._get_active_workspace() if getattr(self, "supports_workspaces", False) else None
+        )
+
         with self.ManagedSessionMaker() as session:
             # --- Phase 1: Batch-fetch all existing trace infos (1 query) ---
             existing_traces = {
                 t.request_id: t
                 for t in self
-                ._trace_query(session)
+                ._trace_query(session, workspace=trace_write_workspace)
                 .filter(SqlTraceInfo.request_id.in_(all_trace_ids))
                 .all()
             }
@@ -4708,7 +4714,7 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
                         existing_traces = {
                             t.request_id: t
                             for t in self
-                            ._trace_query(session)
+                            ._trace_query(session, workspace=trace_write_workspace)
                             .filter(SqlTraceInfo.request_id.in_(all_trace_ids))
                             .all()
                         }
@@ -4921,7 +4927,7 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
                 if update_dict:
                     (
                         self
-                        ._trace_mutation_query(session)
+                        ._trace_mutation_query(session, workspace=trace_write_workspace)
                         .filter(SqlTraceInfo.request_id == trace_id)
                         .update(
                             update_dict,
@@ -4930,7 +4936,9 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
                             synchronize_session=False,
                         )
                     )
-            self._advance_trace_versions_for_db_span_writes(session, all_trace_ids)
+            self._advance_trace_versions_for_db_span_writes(
+                session, all_trace_ids, workspace=trace_write_workspace
+            )
 
             # Re-publish TRACKING_STORE only after the conditional trace_version bump succeeds so
             # span writes, including span-only changes that did not update trace_info, commit
@@ -5203,7 +5211,7 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
         )
 
     def _advance_trace_versions_for_db_span_writes(
-        self, session: Session, trace_ids: Iterable[str]
+        self, session: Session, trace_ids: Iterable[str], workspace=None
     ) -> None:
         """
         Atomically advance the DB-backed trace version for each touched trace.
@@ -5225,7 +5233,7 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
         )
         updated_rows = (
             self
-            ._trace_mutation_query(session)
+            ._trace_mutation_query(session, workspace=workspace)
             .filter(
                 SqlTraceInfo.request_id.in_(trace_ids),
                 ~spans_outside_tracking_store,

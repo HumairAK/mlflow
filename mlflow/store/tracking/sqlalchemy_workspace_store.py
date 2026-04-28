@@ -154,38 +154,40 @@ class WorkspaceAwareSqlAlchemyStore(WorkspaceAwareMixin, SqlAlchemyStore):
                 error_code=INVALID_STATE,
             )
 
-    def _trace_query(self, session, for_update_or_delete=False):
+    def _trace_query(self, session, for_update_or_delete=False, workspace=None):
         """
         Return a workspace-scoped trace query.
 
         Plain reads can delegate to the normal workspace-aware `_get_query()` path, which joins
         through experiments to enforce workspace boundaries. Locking reads use a trace-only query
         filtered by workspace experiment IDs instead so the row lock applies directly to
-        `trace_info` rows without depending on the joined read shape.
+        `trace_info` rows without depending on the joined read shape. Callers may pass an explicit
+        workspace snapshot when a multi-step write needs stable scoping across several queries.
         """
+        workspace = workspace or self._get_active_workspace()
+        workspace_experiment_ids = (
+            session
+            .query(SqlExperiment.experiment_id)
+            .filter(SqlExperiment.workspace == workspace)
+            .subquery()
+        )
+        query = SqlAlchemyStore._get_query(self, session, SqlTraceInfo).filter(
+            SqlTraceInfo.experiment_id.in_(select(workspace_experiment_ids.c.experiment_id))
+        )
         if for_update_or_delete:
-            workspace = self._get_active_workspace()
-            workspace_experiment_ids = (
-                session
-                .query(SqlExperiment.experiment_id)
-                .filter(SqlExperiment.workspace == workspace)
-                .subquery()
-            )
-            query = SqlAlchemyStore._get_query(self, session, SqlTraceInfo).filter(
-                SqlTraceInfo.experiment_id.in_(select(workspace_experiment_ids.c.experiment_id))
-            )
             return self._apply_trace_row_lock(query)
-        return super()._trace_query(session, for_update_or_delete=False)
+        return query
 
-    def _trace_mutation_query(self, session):
+    def _trace_mutation_query(self, session, workspace=None):
         """
         Return a workspace-scoped trace query suitable for bulk UPDATE/DELETE.
 
         Mutation queries avoid the join-based read shape from `_get_query()` and instead target
         `trace_info` directly, scoping rows by experiment IDs that belong to the active
-        workspace.
+        workspace. Accepting an explicit workspace lets callers reuse one resolved workspace
+        across the whole write path instead of re-reading ambient context mid-transaction.
         """
-        workspace = self._get_active_workspace()
+        workspace = workspace or self._get_active_workspace()
         workspace_experiment_ids = (
             session
             .query(SqlExperiment.experiment_id)
