@@ -13914,6 +13914,23 @@ def test_log_spans_then_start_trace_rejects_archived_trace(store: SqlAlchemyStor
     assert trace_info.tags[TraceTagKey.ARCHIVE_LOCATION] == archive_location
 
 
+def test_advance_trace_versions_reports_deleted_traces(store: SqlAlchemyStore):
+    experiment_id = store.create_experiment("test_deleted_trace_version_bump")
+    trace_id = f"tr-{uuid.uuid4().hex}"
+
+    _create_trace(store, trace_id, experiment_id, request_time=1_000)
+    store.delete_traces(experiment_id=experiment_id, trace_ids=[trace_id])
+
+    with store.ManagedSessionMaker() as session:
+        with pytest.raises(
+            MlflowException,
+            match=f"Cannot log spans to traces that no longer exist: '{trace_id}'",
+        ) as exc_info:
+            store._advance_trace_versions_for_db_span_writes(session, [trace_id])
+
+    assert exc_info.value.error_code == ErrorCode.Name(RESOURCE_DOES_NOT_EXIST)
+
+
 def test_log_spans_then_start_trace_preserves_archival_failure_tag(store: SqlAlchemyStore):
     experiment_id = store.create_experiment("test_preserve_archival_failure_tag")
     trace_id = f"tr-{uuid.uuid4().hex}"

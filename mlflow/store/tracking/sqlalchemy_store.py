@@ -356,6 +356,15 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
     def supports_workspaces(self) -> bool:
         return False
 
+    def _get_active_workspace(self) -> str:
+        """
+        Get the active workspace name.
+
+        In single-tenant mode, always returns DEFAULT_WORKSPACE_NAME.
+        Workspace-aware subclasses override this to enforce isolation.
+        """
+        return DEFAULT_WORKSPACE_NAME
+
     def _get_query(self, session, model):
         """
         Return a query for ``model``. Workspace-aware subclasses override this to enforce scoping.
@@ -880,9 +889,6 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
         if for_update_or_delete:
             return self._apply_trace_row_lock(query)
         return query
-
-    def _trace_mutation_query(self, session, workspace=None):
-        return self._get_query(session, SqlTraceInfo)
 
     def _apply_trace_row_lock(self, query):
         if self.db_type == MSSQL:
@@ -3384,13 +3390,18 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
                     if a.trace_id is None:
                         sql_assessment.trace_id = trace_id
                     sql_assessments.append(sql_assessment)
+                trace_write_workspace = self._get_active_workspace()
                 # Lock the reread because this is the read half of a read-modify-write
                 # merge on trace_info, not a passive lookup. The trace_version bump below
                 # coordinates DB-backed payload generation, but this row lock also prevents
                 # us from preserving top-level trace fields from a stale snapshot.
                 db_sql_trace_info = (
                     self
-                    ._trace_query(session, for_update_or_delete=True)
+                    ._trace_query(
+                        session,
+                        for_update_or_delete=True,
+                        workspace=trace_write_workspace,
+                    )
                     .filter(SqlTraceInfo.request_id == trace_id)
                     .one_or_none()
                 )
@@ -3427,7 +3438,11 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
                 for k, v in trace_metrics.items():
                     session.merge(SqlTraceMetrics(request_id=trace_id, key=k, value=v))
                 session.flush()
-                sql_trace_info = self._get_sql_trace_info(session, trace_id)
+                sql_trace_info = self._get_sql_trace_info(
+                    session,
+                    trace_id,
+                    workspace=trace_write_workspace,
+                )
 
             return sql_trace_info.to_mlflow_entity()
 
@@ -3445,9 +3460,12 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
             sql_trace_info = self._get_sql_trace_info(session, trace_id)
             return sql_trace_info.to_mlflow_entity()
 
-    def _get_sql_trace_info(self, session, trace_id) -> SqlTraceInfo:
+    def _get_sql_trace_info(self, session, trace_id, workspace=None) -> SqlTraceInfo:
         sql_trace_info = (
-            self._trace_query(session).filter(SqlTraceInfo.request_id == trace_id).one_or_none()
+            self
+            ._trace_query(session, workspace=workspace)
+            .filter(SqlTraceInfo.request_id == trace_id)
+            .one_or_none()
         )
         if sql_trace_info is None:
             raise MlflowException(
@@ -4658,9 +4676,7 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
 
         # Resolve the workspace once so every trace read/update in this log_spans() call uses the
         # same scope, even if the ambient workspace context changes before the transaction commits.
-        trace_write_workspace = (
-            self._get_active_workspace() if getattr(self, "supports_workspaces", False) else None
-        )
+        trace_write_workspace = self._get_active_workspace()
 
         with self.ManagedSessionMaker() as session:
             # --- Phase 1: Batch-fetch all existing trace infos (1 query) ---
@@ -4925,9 +4941,12 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
                         )
 
                 if update_dict:
+                    # `trace_id` was selected through workspace-scoped reads earlier in this
+                    # call, so we can update by PK here without paying for another workspace
+                    # filter on the hot path.
                     (
-                        self
-                        ._trace_mutation_query(session, workspace=trace_write_workspace)
+                        session
+                        .query(SqlTraceInfo)
                         .filter(SqlTraceInfo.request_id == trace_id)
                         .update(
                             update_dict,
@@ -4936,9 +4955,10 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
                             synchronize_session=False,
                         )
                     )
-            self._advance_trace_versions_for_db_span_writes(
-                session, all_trace_ids, workspace=trace_write_workspace
-            )
+            # Keep the authoritative archived/non-DB-backed check after the writes so the version
+            # bump closes the TOCTOU window; if it fails, the surrounding transaction rolls back
+            # the earlier span/metric/tag flushes.
+            self._advance_trace_versions_for_db_span_writes(session, all_trace_ids)
 
             # Re-publish TRACKING_STORE only after the conditional trace_version bump succeeds so
             # span writes, including span-only changes that did not update trace_info, commit
@@ -5165,7 +5185,24 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
         )
         return dict(blocked_rows)
 
-    def _raise_log_spans_non_db_backed_error(self, blocked_trace_ids: dict[str, str]) -> None:
+    def _get_existing_trace_ids(self, session: Session, trace_ids: Iterable[str]) -> set[str]:
+        trace_ids = list(dict.fromkeys(trace_ids))
+        if not trace_ids:
+            return set()
+        return {
+            request_id
+            for (request_id,) in session
+            .query(SqlTraceInfo.request_id)
+            .filter(SqlTraceInfo.request_id.in_(trace_ids))
+            .all()
+        }
+
+    def _raise_log_spans_trace_write_conflict_error(
+        self,
+        *,
+        blocked_trace_ids: dict[str, str],
+        missing_trace_ids: list[str],
+    ) -> None:
         archived_trace_ids = sorted(
             trace_id
             for trace_id, spans_location in blocked_trace_ids.items()
@@ -5177,41 +5214,43 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
             if spans_location != SpansLocation.ARCHIVE_REPO.value
         )
 
-        if archived_trace_ids and not other_non_db_backed_trace_ids:
+        if archived_trace_ids and not other_non_db_backed_trace_ids and not missing_trace_ids:
             archived_trace_list = ", ".join(f"'{trace_id}'" for trace_id in archived_trace_ids)
             raise MlflowException(
                 f"Cannot log spans to archived traces: {archived_trace_list}.",
                 error_code=INVALID_STATE,
             )
 
-        if other_non_db_backed_trace_ids and not archived_trace_ids:
-            non_db_backed_trace_list = ", ".join(
-                f"'{trace_id}'" for trace_id in other_non_db_backed_trace_ids
-            )
+        if missing_trace_ids and not archived_trace_ids and not other_non_db_backed_trace_ids:
+            missing_trace_list = ", ".join(f"'{trace_id}'" for trace_id in missing_trace_ids)
             raise MlflowException(
-                "Cannot log spans to traces that are no longer DB-backed: "
-                f"{non_db_backed_trace_list}.",
-                error_code=INVALID_STATE,
+                f"Cannot log spans to traces that no longer exist: {missing_trace_list}.",
+                error_code=RESOURCE_DOES_NOT_EXIST,
             )
 
-        if archived_trace_ids and other_non_db_backed_trace_ids:
-            archived_trace_list = ", ".join(f"'{trace_id}'" for trace_id in archived_trace_ids)
-            non_db_backed_trace_list = ", ".join(
-                f"'{trace_id}'" for trace_id in other_non_db_backed_trace_ids
+        detail_groups = []
+        if archived_trace_ids:
+            detail_groups.append(
+                "archived=" + ", ".join(f"'{trace_id}'" for trace_id in archived_trace_ids)
             )
-            raise MlflowException(
-                "Cannot log spans to traces that are no longer DB-backed: "
-                f"archived={archived_trace_list}; other={non_db_backed_trace_list}.",
-                error_code=INVALID_STATE,
+        if other_non_db_backed_trace_ids:
+            detail_groups.append(
+                "other=" + ", ".join(f"'{trace_id}'" for trace_id in other_non_db_backed_trace_ids)
+            )
+        if missing_trace_ids:
+            detail_groups.append(
+                "missing=" + ", ".join(f"'{trace_id}'" for trace_id in missing_trace_ids)
             )
 
+        detail_suffix = f": {'; '.join(detail_groups)}" if detail_groups else "."
         raise MlflowException(
-            "Cannot log spans because one or more traces are no longer DB-backed.",
+            "Cannot log spans because one or more traces are unavailable for DB-backed span "
+            f"writes{detail_suffix}",
             error_code=INVALID_STATE,
         )
 
     def _advance_trace_versions_for_db_span_writes(
-        self, session: Session, trace_ids: Iterable[str], workspace=None
+        self, session: Session, trace_ids: Iterable[str]
     ) -> None:
         """
         Atomically advance the DB-backed trace version for each touched trace.
@@ -5232,8 +5271,8 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
             )
         )
         updated_rows = (
-            self
-            ._trace_mutation_query(session, workspace=workspace)
+            session
+            .query(SqlTraceInfo)
             .filter(
                 SqlTraceInfo.request_id.in_(trace_ids),
                 ~spans_outside_tracking_store,
@@ -5250,7 +5289,14 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
         # archival races are rare, and we still need this post-UPDATE check to
         # distinguish archived traces from other non-DB-backed states.
         blocked_trace_ids = self._get_trace_ids_outside_tracking_store(session, trace_ids)
-        self._raise_log_spans_non_db_backed_error(blocked_trace_ids)
+        existing_trace_ids = self._get_existing_trace_ids(session, trace_ids)
+        missing_trace_ids = [
+            trace_id for trace_id in trace_ids if trace_id not in existing_trace_ids
+        ]
+        self._raise_log_spans_trace_write_conflict_error(
+            blocked_trace_ids=blocked_trace_ids,
+            missing_trace_ids=missing_trace_ids,
+        )
 
     def archive_traces(
         self,
@@ -5802,7 +5848,11 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
             return False
         if any(tag.key == TraceTagKey.ARCHIVAL_FAILURE for tag in sql_trace_info.tags):
             return False
-        return sql_trace_info.status != TraceState.IN_PROGRESS.value
+        return sql_trace_info.status in {
+            TraceState.OK.value,
+            TraceState.ERROR.value,
+            TraceState.STATE_UNSPECIFIED.value,
+        }
 
     def _trace_has_non_empty_span_content(self, session: Session, trace_id: str) -> bool:
         # Use .first() instead of a top-level EXISTS query for MSSQL compatibility.
