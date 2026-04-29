@@ -807,50 +807,6 @@ def test_get_trace_is_workspace_scoped(workspace_tracking_store):
         assert excinfo.value.error_code == "RESOURCE_DOES_NOT_EXIST"
 
 
-def test_log_spans_update_is_workspace_scoped(workspace_tracking_store):
-    trace_id = f"tr-{uuid.uuid4().hex}"
-    initial_span = create_test_span(
-        trace_id=trace_id,
-        start_ns=2_000_000_000,
-        end_ns=3_000_000_000,
-    )
-    earlier_span = create_test_span(
-        trace_id=trace_id,
-        span_id=222,
-        start_ns=1_000_000_000,
-        end_ns=4_000_000_000,
-    )
-
-    with WorkspaceContext("team-a"):
-        exp_id = workspace_tracking_store.create_experiment("trace-exp-workspace-guard")
-        workspace_tracking_store.log_spans(exp_id, [initial_span])
-        original_trace = workspace_tracking_store.get_trace(trace_id)
-
-        call_state = {"count": 0}
-
-        def workspace_side_effect(*_args, **_kwargs):
-            call_state["count"] += 1
-            return "team-a" if call_state["count"] == 1 else "team-b"
-
-        with mock.patch.object(
-            WorkspaceAwareSqlAlchemyStore,
-            "_get_active_workspace",
-            side_effect=workspace_side_effect,
-        ):
-            workspace_tracking_store.log_spans(exp_id, [earlier_span])
-
-        updated_trace = workspace_tracking_store.get_trace(trace_id)
-        assert call_state["count"] == 1
-        assert updated_trace.info.request_time == earlier_span.start_time_ns // 1_000_000
-        assert (
-            updated_trace.info.execution_duration
-            == (earlier_span.end_time_ns - earlier_span.start_time_ns) // 1_000_000
-        )
-        assert updated_trace.info.request_time < original_trace.info.request_time
-        assert updated_trace.info.execution_duration > original_trace.info.execution_duration
-        assert len(updated_trace.data.spans) == 2
-
-
 def test_start_trace_conflict_update_is_workspace_scoped(workspace_tracking_store):
     trace_id = f"tr-{uuid.uuid4().hex}"
     initial_span = create_test_span(

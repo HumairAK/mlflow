@@ -4677,16 +4677,12 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
                 root_span_dict=root_span_dict,
             )
 
-        # Resolve the workspace once so every trace read/update in this log_spans() call uses the
-        # same scope, even if the ambient workspace context changes before the transaction commits.
-        trace_write_workspace = self._get_active_workspace()
-
         with self.ManagedSessionMaker() as session:
             # --- Phase 1: Batch-fetch all existing trace infos (1 query) ---
             existing_traces = {
                 t.request_id: t
                 for t in self
-                ._trace_query(session, workspace=trace_write_workspace)
+                ._trace_query(session)
                 .filter(SqlTraceInfo.request_id.in_(all_trace_ids))
                 .all()
             }
@@ -4733,7 +4729,7 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
                         existing_traces = {
                             t.request_id: t
                             for t in self
-                            ._trace_query(session, workspace=trace_write_workspace)
+                            ._trace_query(session)
                             .filter(SqlTraceInfo.request_id.in_(all_trace_ids))
                             .all()
                         }

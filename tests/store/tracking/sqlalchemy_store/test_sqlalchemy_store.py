@@ -14099,9 +14099,13 @@ def test_log_spans_then_start_trace_uses_locking_reread(store: SqlAlchemyStore):
     original_trace_query = store._trace_query
     seen_locking_calls = []
 
-    def tracked_trace_query(session, for_update_or_delete=False):
+    def tracked_trace_query(session, for_update_or_delete=False, workspace=None):
         seen_locking_calls.append(for_update_or_delete)
-        return original_trace_query(session, for_update_or_delete=for_update_or_delete)
+        return original_trace_query(
+            session,
+            for_update_or_delete=for_update_or_delete,
+            workspace=workspace,
+        )
 
     with mock.patch.object(store, "_trace_query", side_effect=tracked_trace_query):
         store.start_trace(trace_info_for_start)
