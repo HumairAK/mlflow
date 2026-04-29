@@ -13931,6 +13931,66 @@ def test_advance_trace_versions_reports_deleted_traces(store: SqlAlchemyStore):
     assert exc_info.value.error_code == ErrorCode.Name(RESOURCE_DOES_NOT_EXIST)
 
 
+def test_log_spans_then_start_trace_reports_deleted_conflicting_trace(store: SqlAlchemyStore):
+    experiment_id = store.create_experiment("test_start_trace_deleted_conflicting_trace")
+    trace_id = f"tr-{uuid.uuid4().hex}"
+
+    span = create_test_span(
+        trace_id=trace_id,
+        name="test_span",
+        span_id=111,
+        status=trace_api.StatusCode.OK,
+        start_ns=1_000_000_000,
+        end_ns=2_000_000_000,
+        trace_num=12345,
+    )
+    store.log_spans(experiment_id, [span])
+
+    trace_info_for_start = TraceInfo(
+        trace_id=trace_id,
+        trace_location=trace_location.TraceLocation.from_experiment_id(experiment_id),
+        request_time=1000,
+        execution_duration=1000,
+        state=TraceState.OK,
+        tags={"custom_tag": "value"},
+        trace_metadata={"source": "test"},
+    )
+
+    original_trace_query = store._trace_query
+
+    class DeletingQuery:
+        def __init__(self, query):
+            self._query = query
+
+        def filter(self, *args, **kwargs):
+            self._query = self._query.filter(*args, **kwargs)
+            return self
+
+        def one_or_none(self):
+            with mock.patch.object(store, "_trace_query", original_trace_query):
+                store.delete_traces(experiment_id=experiment_id, trace_ids=[trace_id])
+            return self._query.one_or_none()
+
+    def deleting_trace_query(session, for_update_or_delete=False, workspace=None):
+        query = original_trace_query(
+            session,
+            for_update_or_delete=for_update_or_delete,
+            workspace=workspace,
+        )
+        if for_update_or_delete:
+            return DeletingQuery(query)
+        return query
+
+    with mock.patch.object(store, "_trace_query", side_effect=deleting_trace_query):
+        with pytest.raises(
+            MlflowException,
+            match=f"Trace with ID '{trace_id}' no longer exists.",
+        ) as exc_info:
+            store.start_trace(trace_info_for_start)
+
+    assert exc_info.value.error_code == ErrorCode.Name(RESOURCE_DOES_NOT_EXIST)
+
+
 def test_log_spans_then_start_trace_preserves_archival_failure_tag(store: SqlAlchemyStore):
     experiment_id = store.create_experiment("test_preserve_archival_failure_tag")
     trace_id = f"tr-{uuid.uuid4().hex}"

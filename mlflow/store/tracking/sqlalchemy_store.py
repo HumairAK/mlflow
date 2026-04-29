@@ -3406,7 +3406,10 @@ class SqlAlchemyStore(SqlAlchemyGatewayStoreMixin, AbstractStore):
                     .one_or_none()
                 )
                 if db_sql_trace_info is None:
-                    raise
+                    raise MlflowException(
+                        f"Trace with ID '{trace_id}' no longer exists.",
+                        error_code=RESOURCE_DOES_NOT_EXIST,
+                    )
                 if not self._is_sql_trace_db_backed(db_sql_trace_info):
                     raise MlflowException(
                         f"Cannot update traces that are no longer DB-backed: '{trace_id}'.",
