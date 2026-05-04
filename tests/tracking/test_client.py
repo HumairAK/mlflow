@@ -78,7 +78,6 @@ from mlflow.utils.mlflow_tags import (
     MLFLOW_PROJECT_ENTRY_POINT,
     MLFLOW_SOURCE_NAME,
     MLFLOW_SOURCE_TYPE,
-    MLFLOW_TRACE_ARCHIVING,
     MLFLOW_USER,
 )
 from mlflow.utils.os import is_windows
@@ -1306,7 +1305,6 @@ def test_set_trace_tag_on_logged_trace(mock_store):
         TraceTagKey.SPANS_LOCATION,
         TraceTagKey.ARCHIVE_LOCATION,
         TraceTagKey.ARCHIVAL_FAILURE,
-        MLFLOW_TRACE_ARCHIVING,
     ],
 )
 def test_set_trace_tag_skips_immutable_internal_tags_on_active_trace(monkeypatch, key):
@@ -1338,7 +1336,6 @@ def test_set_trace_tag_skips_immutable_internal_tags_on_active_trace(monkeypatch
         TraceTagKey.SPANS_LOCATION,
         TraceTagKey.ARCHIVE_LOCATION,
         TraceTagKey.ARCHIVAL_FAILURE,
-        MLFLOW_TRACE_ARCHIVING,
     ],
 )
 def test_set_trace_tag_skips_immutable_internal_tags(mock_store, key):
@@ -1377,7 +1374,6 @@ def test_delete_trace_tag_on_logged_trace(mock_store):
         TraceTagKey.SPANS_LOCATION,
         TraceTagKey.ARCHIVE_LOCATION,
         TraceTagKey.ARCHIVAL_FAILURE,
-        MLFLOW_TRACE_ARCHIVING,
     ],
 )
 def test_delete_trace_tag_skips_immutable_internal_tags_on_active_trace(monkeypatch, key):
@@ -1410,7 +1406,6 @@ def test_delete_trace_tag_skips_immutable_internal_tags_on_active_trace(monkeypa
         TraceTagKey.SPANS_LOCATION,
         TraceTagKey.ARCHIVE_LOCATION,
         TraceTagKey.ARCHIVAL_FAILURE,
-        MLFLOW_TRACE_ARCHIVING,
     ],
 )
 def test_delete_trace_tag_skips_immutable_internal_tags(mock_store, key):
