@@ -762,6 +762,10 @@ def initialize_backend_stores(
     _verify_tracking_store_trace_archival_support(tracking_store)
 
 
+def initialize_workspace_store(workspace_store_uri: str) -> None:
+    _get_workspace_store(workspace_uri=workspace_store_uri)
+
+
 def _store_supports_workspaces(
     store: AbstractTrackingStore | AbstractModelRegistryStore | AbstractJobStore,
 ) -> bool:
@@ -3860,6 +3864,7 @@ def _get_presigned_download_url(artifact_path):
     a presigned URL for downloading an artifact directly from cloud storage.
     """
     artifact_path = validate_path_is_safe(artifact_path)
+    artifact_path = _get_workspace_scoped_repo_path_if_enabled(artifact_path)
 
     artifact_repo = _get_artifact_repo_mlflow_artifacts()
     _validate_support_multipart_download(artifact_repo)
