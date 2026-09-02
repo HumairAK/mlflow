@@ -48,6 +48,14 @@ These break CI after every rebase. Fix them proactively before pushing.
 
 ### Post-rebase follow-up
 
+- **v3.15.2 handler reconciliation:** Restored the upstream presigned-download
+  endpoint, multipart capability advertisement, artifacts-only guards, budget
+  target validation, issue-detection provider validation, scorer JSON
+  validation, and Python CI's two-pass xdist partition. ODH additionally
+  disables the three job-invocation endpoints at the backend when
+  `MLFLOW_ENABLE_AI_GATEWAY` is false; their upstream behavior remains covered
+  with the flag enabled in focused tests.
+
 - **Streaming artifact uploads:** v3.15.2's `_upload_artifact()` uses
   `StreamUploadMixin.log_artifact_from_stream()` when the artifact repository
   supports it, falling back to a temporary file otherwise. Keep that upstream

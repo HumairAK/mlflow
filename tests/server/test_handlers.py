@@ -251,6 +251,10 @@ from mlflow.store._unity_catalog.registry.rest_store import UcModelRegistryStore
 from mlflow.store.artifact.artifact_repo import ArtifactRepository
 from mlflow.store.artifact.azure_blob_artifact_repo import AzureBlobArtifactRepository
 from mlflow.store.artifact.local_artifact_repo import LocalArtifactRepository
+from mlflow.store.artifact.mlflow_artifacts_repo import (
+    SERVER_INFO_MULTIPART_DOWNLOADS_ENABLED,
+    SERVER_INFO_MULTIPART_UPLOADS_ENABLED,
+)
 from mlflow.store.artifact.s3_artifact_repo import S3ArtifactRepository
 from mlflow.store.entities.paged_list import PagedList
 from mlflow.store.model_registry import (
@@ -468,6 +472,75 @@ def test_server_info_handles_unexpected_trace_archival_config_error(monkeypatch)
         assert response.status_code == 200
         data = response.get_json()
         assert data["trace_archival_enabled"] is False
+
+
+def test_server_info_multipart_capabilities_disabled_by_default():
+    with app.test_client() as c:
+        response = c.get("/api/3.0/mlflow/server-info")
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data[SERVER_INFO_MULTIPART_UPLOADS_ENABLED] is False
+        assert data[SERVER_INFO_MULTIPART_DOWNLOADS_ENABLED] is False
+
+
+def test_server_info_multipart_capabilities_with_multipart_backend(monkeypatch):
+    from mlflow.store.artifact.artifact_repo import MultipartDownloadMixin, MultipartUploadMixin
+
+    class _FakeMultipartArtifactRepo(MultipartUploadMixin, MultipartDownloadMixin):
+        def create_multipart_upload(self, local_file, num_parts, artifact_path=None):
+            raise NotImplementedError
+
+        def complete_multipart_upload(self, local_file, upload_id, parts, artifact_path=None):
+            raise NotImplementedError
+
+        def abort_multipart_upload(self, local_file, upload_id, artifact_path=None):
+            raise NotImplementedError
+
+        def get_download_presigned_url(self, artifact_path, expiration=300):
+            raise NotImplementedError
+
+    monkeypatch.setattr("mlflow.server.handlers._is_serving_proxied_artifacts", lambda: True)
+    monkeypatch.setattr(
+        "mlflow.server.handlers._get_artifact_repo_mlflow_artifacts",
+        lambda: _FakeMultipartArtifactRepo(),
+    )
+
+    with app.test_client() as c:
+        response = c.get("/api/3.0/mlflow/server-info")
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data[SERVER_INFO_MULTIPART_UPLOADS_ENABLED] is True
+        assert data[SERVER_INFO_MULTIPART_DOWNLOADS_ENABLED] is True
+
+
+def test_server_info_multipart_capabilities_with_local_backend(monkeypatch):
+    monkeypatch.setattr("mlflow.server.handlers._is_serving_proxied_artifacts", lambda: True)
+    monkeypatch.setattr(
+        "mlflow.server.handlers._get_artifact_repo_mlflow_artifacts",
+        lambda: mock.Mock(spec=[]),
+    )
+
+    with app.test_client() as c:
+        response = c.get("/api/3.0/mlflow/server-info")
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data[SERVER_INFO_MULTIPART_UPLOADS_ENABLED] is False
+        assert data[SERVER_INFO_MULTIPART_DOWNLOADS_ENABLED] is False
+
+
+def test_server_info_multipart_capabilities_handles_repo_error(monkeypatch):
+    monkeypatch.setattr("mlflow.server.handlers._is_serving_proxied_artifacts", lambda: True)
+    monkeypatch.setattr(
+        "mlflow.server.handlers._get_artifact_repo_mlflow_artifacts",
+        mock.Mock(side_effect=KeyError("ARTIFACTS_DESTINATION")),
+    )
+
+    with app.test_client() as c:
+        response = c.get("/api/3.0/mlflow/server-info")
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data[SERVER_INFO_MULTIPART_UPLOADS_ENABLED] is False
+        assert data[SERVER_INFO_MULTIPART_DOWNLOADS_ENABLED] is False
 
 
 def test_get_endpoints():
@@ -3759,7 +3832,8 @@ def test_query_trace_metrics_handler_empty_result(mock_get_request_message, mock
     assert response_data == {}
 
 
-def test_invoke_scorer_missing_experiment_id():
+def test_invoke_scorer_missing_experiment_id(monkeypatch):
+    monkeypatch.setenv("MLFLOW_ENABLE_AI_GATEWAY", "true")
     with app.test_client() as c:
         response = c.post(
             "/ajax-api/3.0/mlflow/scorer/invoke",
@@ -3770,7 +3844,8 @@ def test_invoke_scorer_missing_experiment_id():
         assert "experiment_id" in data["message"]
 
 
-def test_invoke_scorer_missing_serialized_scorer():
+def test_invoke_scorer_missing_serialized_scorer(monkeypatch):
+    monkeypatch.setenv("MLFLOW_ENABLE_AI_GATEWAY", "true")
     with app.test_client() as c:
         response = c.post(
             "/ajax-api/3.0/mlflow/scorer/invoke",
@@ -3781,7 +3856,8 @@ def test_invoke_scorer_missing_serialized_scorer():
         assert "serialized_scorer" in data["message"]
 
 
-def test_invoke_scorer_missing_trace_ids():
+def test_invoke_scorer_missing_trace_ids(monkeypatch):
+    monkeypatch.setenv("MLFLOW_ENABLE_AI_GATEWAY", "true")
     with app.test_client() as c:
         response = c.post(
             "/ajax-api/3.0/mlflow/scorer/invoke",
@@ -3792,7 +3868,8 @@ def test_invoke_scorer_missing_trace_ids():
         assert "Please select at least one trace to evaluate" in data["message"]
 
 
-def test_invoke_scorer_submits_jobs(mock_tracking_store):
+def test_invoke_scorer_submits_jobs(mock_tracking_store, monkeypatch):
+    monkeypatch.setenv("MLFLOW_ENABLE_AI_GATEWAY", "true")
     serialized_scorer = json.dumps({
         "name": "test_judge",
         "aggregations": [],
@@ -3840,7 +3917,8 @@ def test_invoke_scorer_submits_jobs(mock_tracking_store):
         mock_submit.assert_called_once()
 
 
-def test_invoke_scorer_rejects_decorator_scorer():
+def test_invoke_scorer_rejects_decorator_scorer(monkeypatch):
+    monkeypatch.setenv("MLFLOW_ENABLE_AI_GATEWAY", "true")
     from mlflow.genai.scorers.scorer_utils import DECORATOR_SCORER_REGISTRATION_NOT_SUPPORTED_ERROR
 
     serialized_scorer = json.dumps({
@@ -3865,7 +3943,8 @@ def test_invoke_scorer_rejects_decorator_scorer():
         mock_submit.assert_not_called()
 
 
-def test_invoke_scorer_rejects_invalid_json():
+def test_invoke_scorer_rejects_invalid_json(monkeypatch):
+    monkeypatch.setenv("MLFLOW_ENABLE_AI_GATEWAY", "true")
     with app.test_client() as c:
         response = c.post(
             "/ajax-api/3.0/mlflow/scorer/invoke",
@@ -3877,6 +3956,23 @@ def test_invoke_scorer_rejects_invalid_json():
         )
     assert response.status_code == 400
     assert "serialized_scorer must be valid JSON" in response.get_json()["message"]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/ajax-api/3.0/mlflow/issues/invoke",
+        "/ajax-api/3.0/mlflow/genai/evaluate/invoke",
+        "/ajax-api/3.0/mlflow/scorer/invoke",
+    ],
+)
+def test_job_invocation_endpoints_are_disabled_without_gateway(monkeypatch, path):
+    monkeypatch.setenv("MLFLOW_ENABLE_AI_GATEWAY", "false")
+
+    with app.test_client() as c:
+        response = c.post(path, json={})
+
+    assert response.status_code == 501
 
 
 def test_get_ui_telemetry_handler(
@@ -6155,6 +6251,7 @@ def test_create_issue_with_empty_lists():
 
 def test_invoke_issue_detection_handler_success(monkeypatch):
     monkeypatch.setenv("MLFLOW_SERVER_ENABLE_JOB_EXECUTION", "true")
+    monkeypatch.setenv("MLFLOW_ENABLE_AI_GATEWAY", "true")
 
     mock_job = JobEntity(
         job_id="job-123",
@@ -6217,6 +6314,7 @@ def test_invoke_issue_detection_handler_success(monkeypatch):
 
 def test_invoke_issue_detection_handler_with_endpoint(monkeypatch):
     monkeypatch.setenv("MLFLOW_SERVER_ENABLE_JOB_EXECUTION", "true")
+    monkeypatch.setenv("MLFLOW_ENABLE_AI_GATEWAY", "true")
 
     mock_job = JobEntity(
         job_id="job-456",
@@ -6272,6 +6370,7 @@ def test_invoke_issue_detection_handler_with_endpoint(monkeypatch):
 
 def test_invoke_issue_detection_handler_missing_required_params(monkeypatch):
     monkeypatch.setenv("MLFLOW_SERVER_ENABLE_JOB_EXECUTION", "true")
+    monkeypatch.setenv("MLFLOW_ENABLE_AI_GATEWAY", "true")
 
     request_json = {
         "experiment_id": "exp-123",
@@ -6303,6 +6402,7 @@ def test_invoke_issue_detection_handler_missing_required_params(monkeypatch):
 
 def test_invoke_issue_detection_handler_no_api_key_fails_fast(monkeypatch):
     monkeypatch.setenv("MLFLOW_SERVER_ENABLE_JOB_EXECUTION", "true")
+    monkeypatch.setenv("MLFLOW_ENABLE_AI_GATEWAY", "true")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
     request_json = {
@@ -6331,6 +6431,7 @@ def test_invoke_issue_detection_handler_no_api_key_fails_fast(monkeypatch):
 
 def test_invoke_issue_detection_handler_uses_server_env_key(monkeypatch):
     monkeypatch.setenv("MLFLOW_SERVER_ENABLE_JOB_EXECUTION", "true")
+    monkeypatch.setenv("MLFLOW_ENABLE_AI_GATEWAY", "true")
     monkeypatch.setenv("OPENAI_API_KEY", "server-env-key")
 
     mock_job = JobEntity(
@@ -6377,6 +6478,7 @@ def test_invoke_issue_detection_handler_uses_server_env_key(monkeypatch):
 
 def test_invoke_issue_detection_handler_bedrock_uses_server_env_credentials(monkeypatch):
     monkeypatch.setenv("MLFLOW_SERVER_ENABLE_JOB_EXECUTION", "true")
+    monkeypatch.setenv("MLFLOW_ENABLE_AI_GATEWAY", "true")
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access-key")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
     monkeypatch.delenv("AWS_SESSION_TOKEN", raising=False)
@@ -6427,6 +6529,7 @@ def test_invoke_issue_detection_handler_bedrock_uses_server_env_credentials(monk
 
 def test_invoke_issue_detection_handler_unknown_provider_fails_fast(monkeypatch):
     monkeypatch.setenv("MLFLOW_SERVER_ENABLE_JOB_EXECUTION", "true")
+    monkeypatch.setenv("MLFLOW_ENABLE_AI_GATEWAY", "true")
 
     request_json = {
         "experiment_id": "exp-123",
@@ -6466,6 +6569,7 @@ def _make_genai_evaluate_job(job_id: str = "job-genai-1") -> JobEntity:
 
 def test_invoke_genai_evaluate_handler_success(monkeypatch):
     monkeypatch.setenv("MLFLOW_SERVER_ENABLE_JOB_EXECUTION", "true")
+    monkeypatch.setenv("MLFLOW_ENABLE_AI_GATEWAY", "true")
 
     mock_job = _make_genai_evaluate_job()
     mock_run = mock.MagicMock()
@@ -6515,6 +6619,7 @@ def test_invoke_genai_evaluate_handler_success(monkeypatch):
 
 def test_invoke_genai_evaluate_handler_rejects_empty_trace_ids(monkeypatch):
     monkeypatch.setenv("MLFLOW_SERVER_ENABLE_JOB_EXECUTION", "true")
+    monkeypatch.setenv("MLFLOW_ENABLE_AI_GATEWAY", "true")
 
     mock_client = mock.MagicMock()
 
@@ -6539,6 +6644,7 @@ def test_invoke_genai_evaluate_handler_rejects_empty_trace_ids(monkeypatch):
 
 def test_invoke_genai_evaluate_handler_rejects_empty_serialized_scorers(monkeypatch):
     monkeypatch.setenv("MLFLOW_SERVER_ENABLE_JOB_EXECUTION", "true")
+    monkeypatch.setenv("MLFLOW_ENABLE_AI_GATEWAY", "true")
 
     mock_client = mock.MagicMock()
 
@@ -6562,6 +6668,7 @@ def test_invoke_genai_evaluate_handler_rejects_empty_serialized_scorers(monkeypa
 
 def test_invoke_genai_evaluate_handler_missing_required_fields(monkeypatch):
     monkeypatch.setenv("MLFLOW_SERVER_ENABLE_JOB_EXECUTION", "true")
+    monkeypatch.setenv("MLFLOW_ENABLE_AI_GATEWAY", "true")
 
     # Each call drops one of the required fields; the schema validator
     # should reject before we ever create a run.
@@ -6589,6 +6696,7 @@ def test_invoke_genai_evaluate_handler_propagates_basic_auth_username(monkeypatc
     path so judge LLM calls are made *as* the user.
     """
     monkeypatch.setenv("MLFLOW_SERVER_ENABLE_JOB_EXECUTION", "true")
+    monkeypatch.setenv("MLFLOW_ENABLE_AI_GATEWAY", "true")
 
     mock_job = _make_genai_evaluate_job("job-auth")
     mock_run = mock.MagicMock()
@@ -6623,6 +6731,7 @@ def test_invoke_genai_evaluate_handler_marks_run_failed_when_submit_job_raises(m
     worker that would normally do that transition was never enqueued.
     """
     monkeypatch.setenv("MLFLOW_SERVER_ENABLE_JOB_EXECUTION", "true")
+    monkeypatch.setenv("MLFLOW_ENABLE_AI_GATEWAY", "true")
 
     mock_run = mock.MagicMock()
     mock_run.info.run_id = "run-fail"
@@ -6663,6 +6772,7 @@ def test_invoke_genai_evaluate_handler_marks_run_failed_when_set_tag_raises(monk
     RUNNING because nothing else writes a terminal status from the handler.
     """
     monkeypatch.setenv("MLFLOW_SERVER_ENABLE_JOB_EXECUTION", "true")
+    monkeypatch.setenv("MLFLOW_ENABLE_AI_GATEWAY", "true")
 
     mock_job = _make_genai_evaluate_job("job-tag-fail")
     mock_run = mock.MagicMock()
