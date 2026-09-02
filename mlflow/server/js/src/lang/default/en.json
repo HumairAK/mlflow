@@ -4403,6 +4403,10 @@
     "defaultMessage": "Add",
     "description": "MCP server version detail add metadata button"
   },
+  "HxCOr/": {
+    "defaultMessage": "Experiments are logical groups of pipeline or MLflow runs. To test, track, and compare run performance, parameters, and results, create an experiment.",
+    "description": "Home page experiments empty state description"
+  },
   "HyBP+D": {
     "defaultMessage": "Tags",
     "description": "Title text for the tags section under details tab on the model view\n                   page"
@@ -8014,6 +8018,10 @@
   "Xs1oJm": {
     "defaultMessage": "Search metric charts",
     "description": "Run page > Charts tab > Filter metric charts input > placeholder"
+  },
+  "XsIyck": {
+    "defaultMessage": "No experiments",
+    "description": "Home page experiments empty state title"
   },
   "Xt8M9f": {
     "defaultMessage": "Loading workspaces...",
