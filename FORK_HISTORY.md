@@ -46,6 +46,15 @@ These break CI after every rebase. Fix them proactively before pushing.
 - Preserved the downstream MCP federation layer over the upstream MCP Registry implementation
 - TypeScript compilation, CSS override audit, and `tests/server/test_gateway_disable.py` passed
 
+### Post-rebase follow-up
+
+- **Streaming artifact uploads:** v3.15.2's `_upload_artifact()` uses
+  `StreamUploadMixin.log_artifact_from_stream()` when the artifact repository
+  supports it, falling back to a temporary file otherwise. Keep that upstream
+  branch together with ODH's workspace-path scoping. When preparing the next
+  rebase squash, fold this restoration into the relevant `keep:` squash commit
+  rather than carrying a standalone downstream patch.
+
 ### Late master commits
 
 - Cherry-picked `ed640d9a7` after the squash snapshot to retain the `OWNERS` approver update

@@ -320,6 +320,7 @@ from mlflow.store.artifact.artifact_repo import (
     MultipartDownloadMixin,
     MultipartUploadMixin,
     PresignedUploadMixin,
+    StreamUploadMixin,
 )
 from mlflow.store.artifact.artifact_repository_registry import get_artifact_repository
 from mlflow.store.db.db_types import DATABASE_ENGINES
@@ -3594,14 +3595,17 @@ def _upload_artifact(artifact_path):
     artifact_path = validate_path_is_safe(artifact_path)
     artifact_path = _get_workspace_scoped_repo_path_if_enabled(artifact_path)
     head, tail = posixpath.split(artifact_path)
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        tmp_path = os.path.join(tmp_dir, tail)
-        with open(tmp_path, "wb") as f:
-            while chunk := request.stream.read(ARTIFACT_STREAM_CHUNK_SIZE):
-                f.write(chunk)
+    artifact_repo = _get_artifact_repo_mlflow_artifacts()
 
-        artifact_repo = _get_artifact_repo_mlflow_artifacts()
-        artifact_repo.log_artifact(tmp_path, artifact_path=head or None)
+    if isinstance(artifact_repo, StreamUploadMixin):
+        artifact_repo.log_artifact_from_stream(request.stream, tail, artifact_path=head or None)
+    else:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = os.path.join(tmp_dir, tail)
+            with open(tmp_path, "wb") as f:
+                while chunk := request.stream.read(ARTIFACT_STREAM_CHUNK_SIZE):
+                    f.write(chunk)
+            artifact_repo.log_artifact(tmp_path, artifact_path=head or None)
 
     return _wrap_response(UploadArtifact.Response())
 
