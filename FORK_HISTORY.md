@@ -23,6 +23,35 @@ These break CI after every rebase. Fix them proactively before pushing.
 
 ---
 
+## Rebase: v3.14.0 → v3.15.2
+
+**Date:** 2026-09-02
+**Upstream tag:** `v3.15.2`
+
+### Dropped commits (already in v3.15.0)
+
+- MCP Registry prototype UI (`885ed9ece`) and its superseded federation export (`7502c8c82`)
+- Upstream MCP Registry import/follow-up commits, artifacts-only workspaces, generated schema alignment, and DNS-rebinding fix
+
+### Retained ODH changes
+
+- Fork scaffolding, Konflux configuration, and ODH workflow policy
+- Federated MCP Registry integration, embedded-mode behavior, PatternFly overrides, and UI refinements
+- Konflux dependency security pins and `mlflow-kubernetes-plugins` `1.6.0`, which provides MLflow 3.15 authorization coverage
+
+### Conflict resolutions and validation
+
+- Removed upstream-only workflows retained by ODH policy; kept the ODH `master.yml` behavior
+- Preserved ODH gateway feature flags and gateway-disable handlers while accepting v3.15 refactors
+- Preserved the downstream MCP federation layer over the upstream MCP Registry implementation
+- TypeScript compilation, CSS override audit, and `tests/server/test_gateway_disable.py` passed
+
+### Late master commits
+
+- Cherry-picked `ed640d9a7` after the squash snapshot to retain the `OWNERS` approver update
+
+---
+
 ## Rebase: v3.13.0 → v3.14.0
 
 **Date:** 2026-07-09
@@ -31,15 +60,15 @@ These break CI after every rebase. Fix them proactively before pushing.
 
 ### Dropped commits (already in v3.14.0)
 
-| Original hash | Subject | Upstream equivalent |
-| ------------- | ------- | ------------------- |
-| `06cedb957` | drop: Optimize local artifact uploads with atomic rename (#23794) | `20f567a96` |
-| `6497fb3ef` | drop: Cherry-pick upstream test fixes for CI stability | Multiple |
-| `e01db8f08` | drop: Skip copying local artifacts to temp directories for artifact serving | `20f567a96` |
-| `697f12f8a` | drop: Fix HuggingFace revision test broken by datasets >= 4.8.5 | In v3.14.0 |
-| `4707d29bf` | drop: Skip guardrails-ai while package is unavailable on PyPI | `4cdfed1c5` |
-| `55be94684` | backport: Include workspace in webhook delivery envelopes (#22873) | `0ba31551a` |
-| `fae51223a` | drop: Pin langchain-community<0.4.2 in genai CI job (#23697) | `b20ae2163` |
+| Original hash | Subject                                                                     | Upstream equivalent |
+| ------------- | --------------------------------------------------------------------------- | ------------------- |
+| `06cedb957`   | drop: Optimize local artifact uploads with atomic rename (#23794)           | `20f567a96`         |
+| `6497fb3ef`   | drop: Cherry-pick upstream test fixes for CI stability                      | Multiple            |
+| `e01db8f08`   | drop: Skip copying local artifacts to temp directories for artifact serving | `20f567a96`         |
+| `697f12f8a`   | drop: Fix HuggingFace revision test broken by datasets >= 4.8.5             | In v3.14.0          |
+| `4707d29bf`   | drop: Skip guardrails-ai while package is unavailable on PyPI               | `4cdfed1c5`         |
+| `55be94684`   | backport: Include workspace in webhook delivery envelopes (#22873)          | `0ba31551a`         |
+| `fae51223a`   | drop: Pin langchain-community<0.4.2 in genai CI job (#23697)                | `b20ae2163`         |
 
 ### Squashed commits
 
