@@ -85,6 +85,12 @@ These break CI after every rebase. Fix them proactively before pushing.
   otherwise unnecessary formatting-only diff; this restoration leaves runtime
   behavior unchanged and avoids requiring its bypass label.
 
+- **Protobuf cross-test diagnostics:** Retained the Docker-backed MySQL,
+  PostgreSQL, and MSSQL server integration test. Added a failure-only workflow
+  step that emits the relevant container logs, since its previous five-minute
+  health-check timeouts did not preserve the service startup error needed to
+  diagnose them.
+
 ### Late master commits
 
 - Cherry-picked `ed640d9a7` after the squash snapshot to retain the `OWNERS` approver update
