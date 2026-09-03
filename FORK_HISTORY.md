@@ -90,6 +90,12 @@ These break CI after every rebase. Fix them proactively before pushing.
   test now emits Compose logs before `testcontainers` tears down its
   containers; a workflow-level post-failure log step ran too late to do so.
 
+- **AnyIO-compatible WSGI adapter:** Fresh Docker integration images resolved
+  AnyIO 4.15, where `anyio.from_thread` is no longer implicitly exposed from
+  the package. The fork's efficient WSGI adapter now explicitly uses the
+  supported submodule API instead of inheriting Starlette's incompatible
+  implementation, restoring server health checks without constraining AnyIO.
+
 ### Late master commits
 
 - Cherry-picked `ed640d9a7` after the squash snapshot to retain the `OWNERS` approver update
