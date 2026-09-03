@@ -98,12 +98,3 @@ jobs:
             --ignore=tests/gateway \
             --ignore=tests/tracking/test_mlflow_artifacts.py \
             tests
-      - name: Dump Docker integration logs
-        if: failure()
-        run: |
-          docker ps -a
-          for container in $(docker ps -a --format '{{.Names}}' | grep '^mlflow-'); do
-            echo "::group::$container"
-            docker logs "$container" || true
-            echo "::endgroup::"
-          done
