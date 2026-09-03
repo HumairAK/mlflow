@@ -48,6 +48,23 @@ These break CI after every rebase. Fix them proactively before pushing.
 
 ### Post-rebase follow-up
 
+- **Focused CI reconciliation:** Formatted the component-ID registry with the
+  pinned Prettier v2 pre-commit hook. Restored v3.15.2's budget-window filter:
+  global policies are visible in every workspace, while workspace and endpoint
+  policies are limited to their owning workspace. Updated the traces test's
+  `useServerInfo` mock for the new `useWorkspacesEnabled` export, and changed
+  Prompt creation tests to select the current name and content controls rather
+  than no-longer-associated labels.
+
+- **Focused JS timeout investigation:** The CopyButton minimal render,
+  StarterCodeCard Python-tab, and PlaygroundTopBar Save-callback tests did not
+  reproduce their CI timeouts (each completed in about two seconds). The MCP
+  Registry display-name overflow test consistently completed successfully only
+  after roughly eight seconds; it now has a local 10-second allowance. No
+  production behavior or global Jest timeout was changed. The S3 multipart
+  presigned-upload operator failure remains owned by mlflow-operator and is
+  intentionally not addressed here.
+
 - **v3.15.2 handler reconciliation:** Restored the upstream presigned-download
   endpoint, multipart capability advertisement, artifacts-only guards, budget
   target validation, issue-detection provider validation, scorer JSON

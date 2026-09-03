@@ -6569,7 +6569,14 @@ def _list_budget_windows():
     maybe_refresh_budget_policies(store)
     windows = get_budget_tracker().get_all_windows()
     if workspace is not None:
-        windows = [w for w in windows if _policy_applies(w.policy, workspace)]
+        # GLOBAL policies are always shown; WORKSPACE/ENDPOINT policies are shown
+        # only for the requesting workspace (ENDPOINT policies still carry an
+        # owning workspace even though enforcement matches on endpoint_id).
+        windows = [
+            w
+            for w in windows
+            if w.policy.target_scope == BudgetTargetScope.GLOBAL or w.policy.workspace == workspace
+        ]
     response_message = ListGatewayBudgetWindows.Response()
     for w in windows:
         window_msg = ListGatewayBudgetWindows.BudgetWindow(
