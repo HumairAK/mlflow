@@ -83,6 +83,7 @@ These break CI after every rebase. Fix them proactively before pushing.
 ### Late master commits
 
 - Cherry-picked `ed640d9a7` after the squash snapshot to retain the `OWNERS` approver update
+- Cherry-picked `55ffb4147c` after the history-linking merge to retain PatternFly modal-footer and link-button styles, plus the cancel action in the MCP server edit modal
 
 ---
 
