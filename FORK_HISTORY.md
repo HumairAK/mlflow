@@ -80,6 +80,11 @@ These break CI after every rebase. Fix them proactively before pushing.
   rebase squash, fold this restoration into the relevant `keep:` squash commit
   rather than carrying a standalone downstream patch.
 
+- **Whitespace-only CI policy:** Restored the pre-rebase blank line whitespace
+  in `dev/run-dev-server.sh`. The whitespace checker correctly rejects an
+  otherwise unnecessary formatting-only diff; this restoration leaves runtime
+  behavior unchanged and avoids requiring its bypass label.
+
 ### Late master commits
 
 - Cherry-picked `ed640d9a7` after the squash snapshot to retain the `OWNERS` approver update
