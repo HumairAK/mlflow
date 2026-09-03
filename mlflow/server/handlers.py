@@ -88,7 +88,7 @@ from mlflow.exceptions import (
     _UnsupportedPresignedUploadException,
 )
 from mlflow.gateway.budget import maybe_refresh_budget_policies
-from mlflow.gateway.budget_tracker import _policy_applies, get_budget_tracker
+from mlflow.gateway.budget_tracker import get_budget_tracker
 from mlflow.gateway.constants import GATEWAY_DISABLED_MESSAGE
 from mlflow.gateway.utils import is_valid_endpoint_name
 from mlflow.genai.label_schemas.label_schemas import LabelSchemaType, _input_from_proto
