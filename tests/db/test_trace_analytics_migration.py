@@ -18,6 +18,7 @@ from mlflow.store.db.utils import _get_alembic_config
 from mlflow.store.tracking.dbmodels.initial_models import Base as InitialBase
 from mlflow.store.tracking.dbmodels.models import (
     SqlAssessmentDailyRollup,
+    SqlSpan,
     SqlSpanCostDailyRollup,
     SqlTraceMetricDailyRollup,
 )
@@ -104,6 +105,13 @@ def test_postgres_rollup_ids_use_identity(model):
     assert "BIGSERIAL" not in ddl
 
 
+def test_mssql_span_dimensions_use_unicode():
+    for model in (SqlSpan, SqlSpanCostDailyRollup):
+        ddl = str(sa.schema.CreateTable(model.__table__).compile(dialect=mssql.dialect()))
+        assert "model_name NVARCHAR(500)" in ddl
+        assert "model_provider NVARCHAR(500)" in ddl
+
+
 def _table(conn, name):
     return sa.Table(name, sa.MetaData(), autoload_with=conn)
 
@@ -149,6 +157,13 @@ def _seed_legacy_analytics_data(conn):
                 "timestamp_ms": 1_700_000_001_000,
                 "execution_time_ms": 20,
                 "status": "ERROR",
+            },
+            {
+                "request_id": "trace-non-gateway",
+                "experiment_id": 1,
+                "timestamp_ms": 1_700_000_002_000,
+                "execution_time_ms": 30,
+                "status": "OK",
             },
         ],
     )
@@ -199,6 +214,11 @@ def _seed_legacy_analytics_data(conn):
                 "request_id": "trace-fallback",
                 "key": TraceMetadataKey.COST,
                 "value": json.dumps({CostKey.TOTAL_COST: "not-a-number"}),
+            },
+            {
+                "request_id": "trace-fallback",
+                "key": TraceMetadataKey.GATEWAY_ENDPOINT_ID,
+                "value": "gateway-endpoint",
             },
             {
                 "request_id": "trace-explicit",
@@ -267,6 +287,18 @@ def _seed_legacy_analytics_data(conn):
                     SpanAttributeKey.MODEL: _MODEL_NAME_AT_LIMIT,
                 }),
             },
+            {
+                "trace_id": "trace-non-gateway",
+                "experiment_id": 1,
+                "span_id": "span-non-gateway",
+                "name": "non-gateway call",
+                "type": "CHAT_MODEL",
+                "status": "OK",
+                "start_time_unix_nano": 1_000,
+                "end_time_unix_nano": 1_100,
+                "content": "{}",
+                "dimension_attributes": json.dumps({}),
+            },
         ],
     )
     conn.execute(
@@ -307,6 +339,12 @@ def _seed_legacy_analytics_data(conn):
                 "span_id": "span-explicit",
                 "key": "custom-span-metric",
                 "value": 7.0,
+            },
+            {
+                "trace_id": "trace-non-gateway",
+                "span_id": "span-non-gateway",
+                "key": CostKey.TOTAL_COST,
+                "value": 4.0,
             },
         ],
     )
@@ -394,6 +432,7 @@ def test_trace_analytics_migration_operation_order(monkeypatch):
         "_add_analytics_columns",
         "_backfill_trace_analytics",
         "_backfill_span_analytics",
+        "_backfill_trace_costs_from_spans",
         "_backfill_assessment_analytics",
         "_validate_backfill",
         "_finalize_assessment_not_null",
@@ -564,7 +603,20 @@ def test_trace_analytics_migration_backfills_schema_and_cleans_legacy_rows(tmp_p
                     2.5,
                     3.75,
                 ),
-                ("trace-fallback", None, None, None, None, None, None, None, None, None, None),
+                ("trace-fallback", None, None, None, None, None, None, None, None, None, 3.5),
+                (
+                    "trace-non-gateway",
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
             ]
 
             spans = conn.execute(
@@ -584,6 +636,7 @@ def test_trace_analytics_migration_backfills_schema_and_cleans_legacy_rows(tmp_p
                 ),
                 ("span-fallback-1", 0.5, None, 1.5, None, None),
                 ("span-fallback-2", 1.0, None, 2.0, _MODEL_NAME_AT_LIMIT, None),
+                ("span-non-gateway", None, None, 4.0, None, None),
             ]
 
             assessments = conn.execute(
@@ -604,14 +657,16 @@ def test_trace_analytics_migration_backfills_schema_and_cleans_legacy_rows(tmp_p
             assert conn.execute(sa.text("SELECT COUNT(*) FROM trace_tags")).scalar_one() == 1
             assert (
                 conn.execute(sa.text("SELECT COUNT(*) FROM trace_request_metadata")).scalar_one()
-                == 1
+                == 2
             )
             assert conn.execute(sa.text("SELECT COUNT(*) FROM trace_metrics")).scalar_one() == 1
             assert conn.execute(sa.text("SELECT COUNT(*) FROM span_metrics")).scalar_one() == 1
             trace_tags = _table(conn, "trace_tags")
             assert conn.execute(sa.select(trace_tags.c.key)).scalar_one() == "custom-tag"
             trace_metadata = _table(conn, "trace_request_metadata")
-            assert conn.execute(sa.select(trace_metadata.c.key)).scalar_one() == "custom-metadata"
+            assert conn.execute(
+                sa.select(trace_metadata.c.key).order_by(trace_metadata.c.key)
+            ).scalars().all() == ["custom-metadata", TraceMetadataKey.GATEWAY_ENDPOINT_ID]
 
         with engine.begin() as conn:
             common_rollup_values = {
@@ -674,10 +729,10 @@ def test_trace_analytics_migration_downgrade_and_reupgrade(tmp_path):
             assert conn.execute(sa.text("SELECT COUNT(*) FROM trace_tags")).scalar_one() == 2
             assert (
                 conn.execute(sa.text("SELECT COUNT(*) FROM trace_request_metadata")).scalar_one()
-                == 4
+                == 6
             )
             assert conn.execute(sa.text("SELECT COUNT(*) FROM trace_metrics")).scalar_one() == 6
-            assert conn.execute(sa.text("SELECT COUNT(*) FROM span_metrics")).scalar_one() == 6
+            assert conn.execute(sa.text("SELECT COUNT(*) FROM span_metrics")).scalar_one() == 7
             trace_metadata = _table(conn, "trace_request_metadata")
             token_usage = conn.execute(
                 sa.select(trace_metadata.c.value).where(
@@ -702,7 +757,7 @@ def test_trace_analytics_migration_downgrade_and_reupgrade(tmp_path):
             }
             assert conn.execute(
                 sa.text("SELECT duration_ns FROM spans ORDER BY span_id")
-            ).scalars().all() == [100, 200, 300]
+            ).scalars().all() == [100, 200, 300, 100]
 
         command.upgrade(config, REVISION)
         with engine.connect() as conn:
@@ -710,7 +765,7 @@ def test_trace_analytics_migration_downgrade_and_reupgrade(tmp_path):
                 conn.execute(
                     sa.text("SELECT total_cost FROM trace_info WHERE request_id = 'trace-fallback'")
                 ).scalar_one()
-                is None
+                == 3.5
             )
     finally:
         engine.dispose()

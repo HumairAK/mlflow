@@ -468,7 +468,7 @@ def test_final_migration_repairs_legacy_writes_after_prepopulation(tmp_path):
             )
 
         update_counts = _upgrade_and_count_analytics_updates(engine, config)
-        assert update_counts == {"trace": 1, "span": 1, "assessment": 1}
+        assert update_counts == {"trace": 2, "span": 1, "assessment": 1}
 
         with engine.connect() as conn:
             trace_info = _table(conn, "trace_info")
@@ -518,7 +518,7 @@ def test_final_migration_skips_fully_prepopulated_rows(tmp_path):
         prepopulation.prepopulate_trace_analytics(engine)
 
         update_counts = _upgrade_and_count_analytics_updates(engine, config)
-        assert update_counts == {"trace": 0, "span": 0, "assessment": 0}
+        assert update_counts == {"trace": 1, "span": 0, "assessment": 0}
     finally:
         engine.dispose()
 

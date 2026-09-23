@@ -41,6 +41,7 @@ _TRACE_NAME_TAG_KEY = "mlflow.traceName"
 _TRACE_SESSION_METADATA_KEY = "mlflow.trace.session"
 _TOKEN_USAGE_METADATA_KEY = "mlflow.trace.tokenUsage"
 _COST_METADATA_KEY = "mlflow.trace.cost"
+_GATEWAY_ENDPOINT_ID_METADATA_KEY = "mlflow.gateway.endpointId"
 _SPAN_MODEL_ATTRIBUTE_KEY = "mlflow.llm.model"
 _SPAN_MODEL_PROVIDER_ATTRIBUTE_KEY = "mlflow.llm.provider"
 
@@ -51,6 +52,7 @@ def upgrade():
     _add_analytics_columns()
     _backfill_trace_analytics()
     _backfill_span_analytics()
+    _backfill_trace_costs_from_spans()
     _backfill_assessment_analytics()
     _validate_backfill()
     _finalize_assessment_not_null()
@@ -604,6 +606,35 @@ def _backfill_span_analytics():
             truncation_counts["model_name"],
             truncation_counts["model_provider"],
         )
+
+
+def _backfill_trace_costs_from_spans():
+    bind = op.get_bind()
+    metadata = sa.MetaData()
+    trace_info = sa.Table("trace_info", metadata, autoload_with=bind)
+    trace_metadata = sa.Table("trace_request_metadata", metadata, autoload_with=bind)
+    spans = sa.Table("spans", metadata, autoload_with=bind)
+    span_total_cost = (
+        sa
+        .select(sa.func.sum(spans.c.total_cost))
+        .where(spans.c.trace_id == trace_info.c.request_id)
+        .scalar_subquery()
+    )
+    bind.execute(
+        trace_info
+        .update()
+        .where(
+            trace_info.c.total_cost.is_(None),
+            span_total_cost.isnot(None),
+            sa.exists(
+                sa.select(1).where(
+                    trace_metadata.c.request_id == trace_info.c.request_id,
+                    trace_metadata.c.key == _GATEWAY_ENDPOINT_ID_METADATA_KEY,
+                )
+            ),
+        )
+        .values(total_cost=span_total_cost)
+    )
 
 
 def _backfill_assessment_analytics():

@@ -1030,8 +1030,8 @@ class SqlSpanCostDailyRollup(Base):
     rollup_day = Column(Date, nullable=False)
     metric_name = Column(String(250), nullable=False)
     grouping_set = Column(String(50), nullable=False)
-    model_name = Column(String(500), nullable=True)
-    model_provider = Column(String(500), nullable=True)
+    model_name = Column(String(500).with_variant(NVARCHAR(500), "mssql"), nullable=True)
+    model_provider = Column(String(500).with_variant(NVARCHAR(500), "mssql"), nullable=True)
     sample_count = Column(BigInteger, nullable=False)
     sum_value = Column(Float(precision=53), nullable=True)
     min_value = Column(Float(precision=53), nullable=True)
@@ -2299,11 +2299,11 @@ class SqlSpan(Base):
     """
     Denormalized total cost used by span analytics queries.
     """
-    model_name = Column(String(500), nullable=True)
+    model_name = Column(String(500).with_variant(NVARCHAR(500), "mssql"), nullable=True)
     """
     Denormalized model name used by span cost analytics queries.
     """
-    model_provider = Column(String(500), nullable=True)
+    model_provider = Column(String(500).with_variant(NVARCHAR(500), "mssql"), nullable=True)
     """
     Denormalized model provider used by span cost analytics queries.
     """
